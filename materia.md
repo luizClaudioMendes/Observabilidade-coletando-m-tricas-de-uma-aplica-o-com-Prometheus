@@ -67,8 +67,7 @@ Então, teremos informações úteis para o time de desenvolvimento, para a oper
 
 Entendendo os conceitos de observabilidade, monitoramento e métricas, podemos avançar para o cenário do curso.
 
-
-TODO: IMAGEM 1
+![alt text]([http://url/to/img.png](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/1.PNG))
 
 Aqui mostro um diagrama que mostra o ambiente que utilizaremos. 
 
