@@ -41,7 +41,19 @@ terminado em
     - [Prometheus.yaml](#prometheusyaml)
       - [scrape interval](#scrape-interval)
       - [Prometheus job](#prometheus-job)
-  - [](#)
+  - [Subindo o cliente para consumo da API -- automatizado](#subindo-o-cliente-para-consumo-da-api----automatizado)
+    - [Pasta client](#pasta-client)
+    - [Client-forum-api](#client-forum-api)
+  - [A anatomia de uma Métrica](#a-anatomia-de-uma-métrica)
+    - [metric name](#metric-name)
+    - [labels](#labels)
+    - [sample](#sample)
+    - [Tipos de Dados no Prometheus](#tipos-de-dados-no-prometheus)
+      - [Instant Vector](#instant-vector)
+      - [Range Vector](#range-vector)
+      - [Scalar](#scalar)
+      - [String](#string)
+        - [Subquery](#subquery)
 
 
 ## Apresentaçao
@@ -1777,4 +1789,408 @@ Então, aqui tem algumas flags que estão sendo utilizadas que podem ser encontr
 
 Então, é isso, foi só uma navegação pelo Prometheus, entendendo algumas configurações dele. Vamos aprofundando, vamos trabalhando mais nisso e olhando para o que interessa no decorrer do curso.
 
-## 
+## Subindo o cliente para consumo da API -- automatizado
+Nós já temos a nossa API, nós possuímos o nosso database, o nosso cache e o nosso proxy, porém, não temos um client, um consumidor dessa API.
+
+E isso nos leva a um problema porque não temos as métricas sendo alimentadas através desse consumo. 
+
+Nós poderíamos utilizar algum recurso, como a extensão de um browser, para fazer requisições de tempos em tempos, ou seja, atualizações daquela página em que estamos consumindo o endpoint.
+
+Ou poderíamos continuar utilizando o Postman, só que essas duas soluções trariam uma carga de processamento que não é interessante, nesse momento, para a nossa infraestrutura.
+
+Então, a solução é a seguinte: **vamos rodar um contêiner bem simples e esse contêiner vai consumir a nossa aplicação em todos os endpoints que ela possui e, inclusive, gerar alguns erros de tempo em tempo para que tenhamos todas as métricas devidamente alimentadas**.
+
+Para fazer isso, eu quero que você acesse a pasta em que está toda a configuração – no meu caso, está no workdir do Eclipse, eu estou no Linux, e aqui tem dentro tem um diretório chamado client.
+
+### Pasta client
+
+Eu chamo de “diretório”, se você está no Windows, você está mais habituado a ouvir “pasta”, mas já faz esse link, quando eu chamar diretório, é pasta.
+
+Vamos entrar no client, nesse diretório, e aqui dentro eu tenho um Dockerfile e um script Shell, um script em linguagem de Terminal do Linux. Não se preocupa porque o contêiner é Linux, então é esse script mesmo que tem que rodar, sem nenhuma modificação.
+
+Vamos conhecer esse Dockerfile para que você possa entender o que vamos fazer. 
+
+```
+FROM debian
+
+USER root
+
+COPY ./client.sh /scripts/client.sh
+
+RUN apt update && \
+        apt install curl -y && \
+        chmod +x /scripts/client.sh
+
+ENTRYPOINT ["/scripts/client.sh"]
+
+```
+
+Nesse Dockerfile, vamos gerar um contêiner derivado da imagem do debian, da última versão da imagem, por isso que não estou com tagueamento de versão para ele.
+
+O usuário que vai executar vai ser o root. Eu não estou preocupado com segurança nesse momento, então vai ser o root mesmo que vai executar. 
+
+E o que eu vou fazer aqui? 
+
+Vou fazer uma cópia daquele script client.sh para dentro desse path /scripts/client.sh.
+
+Depois disso, eu vou rodar, através do RUN, um contêiner, que é o apt update que vai atualizar a base índice de pacotes do Debian. O Linux funciona por pacotes e sempre vai haver um software que faz a gestão de pacotes.
+
+No caso do Debian, em alto nível, é o apt – Debian e derivados, como o Ubuntu. 
+
+Vamos rodar o apt update que vai sincronizar o que eu tenho de referência de pacotes com o que existe na internet, deixar isso atualizado e depois eu vou instalar um software chamado curl.
+
+O curl vai fazer o papel do browser, é ele que vai fazer a requisição para a nossa API. 
+
+Ele é o client que nós vamos usar. 
+
+E depois disso vou dar um comando chamado chmod (change mode) que altera as permissões desse script, delegando para ele o bit de execução, então ele vai virar um executável.
+
+tem o entrypoint do contêiner que é a chamada que é executada assim que o contêiner sobe, o objetivo de vida desse contêiner vai estar no entrypoint eu é a execução desse script client.sh.
+
+É bem simples essa configuração. 
+
+Está aqui o Dockerfile e vamos dar uma olhada no script, no client.sh. 
+
+```
+HOST='proxy-forum-api'
+
+while true
+    do
+	ENDP=`expr $RANDOM % 3 + 1`
+	NUMB=`expr $RANDOM % 100 + 1`
+	#TEMP=`expr 1 + $(awk -v seed="$RANDOM" 'BEGIN { srand(seed); printf("%.4f\n", rand()) }')`
+        
+	if [ $NUMB -le 55 ]; then
+	    curl --silent --output /dev/null http://${HOST}/topicos
+        elif [ $NUMB -ge 56 ] && [ $NUMB -le 85 ] ; then
+	    curl --silent --output /dev/null http://${HOST}/topicos/$ENDP
+        elif [ $NUMB -ge 86 ] && [ $NUMB -le 95 ] ; then
+	    curl --silent --output /dev/null --data '{"email":"moderador@email.com","senha":"123456"}' \
+		 --header "Content-Type:application/json" \
+		 --request POST http://${HOST}/auth
+        elif [ $NUMB -ge 96 ] && [ $NUMB -le 98 ] ; then
+	    curl --silent --output /dev/null --data '{"email":"moderador@email.com","senha":"1234567"}' \
+	         --header "Content-Type:application/json" \
+	         --request POST http://${HOST}/auth
+	else
+	    curl --silent --output /dev/null http://${HOST}/topicos/0
+        fi
+
+	#sleep $TEMP
+	sleep 0.75
+done
+
+```
+
+Esse script tem uma variável chamada host, essa variável recebe o nome do contêiner proxy, o proxy-forum-api.
+
+A configuração dessa variável é o nome do contêiner proxy e ele tem um laço infinito, um while. 
+
+Esse while é infinito porque ele está avaliando a condição de true, e true é um dado booleano que sempre vai ser verdade. 
+
+Então, isso nunca vai parar de ser executado, é um laço de repetição infinito.
+
+são declaradas três variáveis. 
+
+A primeira variável (ENDP) vai conter um número aleatório de 1 a 3; a cada execução do while, a cada iteração, essa variável vai ser alimentada com uma configuração de um valor inteiro variando de 1 a 3.
+
+A segunda variável (NUMB) vai fazer a mesma coisa, mas vai ter um valor de 1 a 100 a cada iteração. 
+
+E a terceira variável (TEMP) , também vai receber um valor aleatório, porém, um valor menor que 1, então ela vai receber um float que está entre 0 e 1.
+
+Para que isso? 
+
+Para que tenhamos, primeiro, um tempo a cada iteração que vai ser inferior a 1 segundo; depois disso, para que possamos atingir um dos endpoints que já está configurado, que é o ID de um tópico que sempre vai variar de 1 a 3.
+
+A cada iteração desse laço, eu vou atingir um endpoint, o endpoint /topicos, em um ID específico que vai variar de 1 a 3 a cada execução que eu entrar, na condição específica de fazer uma requisição para ele.
+
+Quanto ao outro número (NUMB), é ele que segue com a lógica de negócio principal desse script simples. 
+
+Basicamente, o que eu faço aqui é uma estrutura condicional de if/else. Esse if vai avaliar se a variável numb, que recebe um valor de 1 a 100, é menor ou igual a 50.
+
+Se ela for menor ou igual a 50, ele vai fazer uma requisição para /topicos, ele vai atingir o proxy-forum-api em /topicos; se for maior ou igual a 51 e menor ou igual que 80, vamos mandar uma requisição para /topicos em um ID que vai estar variando de 1 a 3 a cada iteração.
+
+Caso o numb esteja maior ou igual a 81 e menor ou igual que 90, fazemos uma autenticação com sucesso. Agora, se numb for maior ou igual que 91 e menor ou igual que 95, nós falhamos uma autenticação; se esse valor estiver acima de 95, ou seja, se for de 96 até 100, nós enviamos uma requisição para um ID que não existe e isso gera um erro também.
+
+Então, a condição mais simples de ser atingida é uma requisição para /topicos. 
+
+A segunda condição mais fácil de ser atingida é a que envia uma requisição para um ID que vai variar de 1 a 3 em /topicos.
+
+A nossa terceira condição, que é um pouco mais difícil de ser alcançada, é uma autenticação com sucesso. 
+
+Depois, os erros têm um percentual bem pequeno de chance de ocorrer e eles vão estar alimentando métricas relacionadas à falha de autenticação e as chamadas a endpoints que não existem, que não vão ser encontrados.
+
+Para você entender o que é o random, é um pseudodispositivo, e toda essa lógica que foi feita nesse script bem simples. 
+
+Basicamente, esse Dockerfile vai pegar esse script, vai configurá-lo, com permissões de execução, vai sanar as dependências instalando o curl, e vai chamar esse script no entrypoint de execução.
+
+### Client-forum-api
+Saindo desse escopo, temos o nosso Dockerfile. 
+
+```
+client-forum-api:
+    build:
+      context: ./client/
+      dockerfile: Dockerfile
+    image: client-forum-api
+    container_name: client-forum-api
+    restart: unless-stopped
+    networks:
+      - proxy
+    depends_on:
+      - proxy-forum-api
+```
+
+Abrindo esse Dockerfile, você vai notar que o seu está com o último bloco comentado. 
+
+Vamos descomentar esse bloco e eu vou te explicar o que esse bloco está fazendo.
+
+Esse server que vai ser gerado no Docker Compose se chama client-forum-api, ele vai fazer um build. 
+
+O contexto desse build é no diretório client, e lá ele vai encontrar um Dockerfile. Você já sabe o que o Dockerfile faz e o que o script faz também.
+
+Ele vai gerar uma imagem chamada client-forum-api e um contêiner derivado dessa imagem chamado client-forum-api também. Se esse contêiner for derrubado, ele não vai subir.
+
+Todos os contêineres estão com essa configuração porque, em dado momento, vamos realmente derrubar alguma coisa para verificar como que as métricas vão ser alimentadas e, principalmente, para testar os alertas que serão feitos mais para frente.
+
+Ele está dentro da rede proxy e qual é a dependência dele? 
+
+O prometheus-forum-api, o contêiner do Prometheus. 
+
+Por que ele depende do Prometheus? 
+
+Porque temos uma cadeia de dependências que permite somente que um contêiner suba após o sucesso do outro.
+
+Isso começa desde o primeiro service que possuímos aqui, o redis. 
+
+O redis não depende de ninguém, ele tem que subir; após o redis, tem o mysql, que depende do redis; depois, tem o redis-forum-api, que depende do mysql; depois, o proxy, que depende do app; e o prometheus, que depende do proxy; e, por último, o client, que depende do prometheus.
+
+Por hora, essa configuração vai nos auxiliar, porque esse script vai ser executado nesse contêiner e ele, logicamente, vai fazer muitas requisições para a nossa aplicação sem trazer uma carga de CPU ou de consumo de memória notável para a sua infraestrutura, para a sua máquina pessoal, que é o host que está rodando essa stack.
+
+Vamos rodar o comando docker-compose up -d para subir, modo daemon. 
+
+Ele vai fazer o update da base índice de pacotes; vai instalar o software que vamos utilizar, o curl; depois, vai rodar as permissões e vai subir a stack. 
+
+Depois disso, já vamos ter um client consumindo a nossa aplicação e, por fim, vamos ter dados relevantes nas nossas métricas, vamos ter, enfim, insumos para podermos identificar melhor a funcionalidade de cada métrica.
+
+## A anatomia de uma Métrica
+Agora que já temos o consumidor da nossa API, vamos conseguir ter uma visibilidade melhor sobre as métricas, mas, para que possamos realmente fazer bom uso do que estamos fazendo, é muito importante que você entenda como é uma métrica para o Prometheus.
+
+No browser, vamos no “localhost/metrics”, vou atualizar, você vai ver que muita métrica foi gerada por conta daquele client que nós rodamos. 
+
+Inclusive, alguns erros 500 vão se detectados, porque o script começou a ser executado pelo client antes de o MySQL estar realmente atendendo às requisições, então gerou uma quantidade de erros 500 em /topicos.
+
+Foi só durante a subida, agora está certo. 
+
+Você vai notar o seguinte, os valores estão aumentando porque a aplicação está sendo consumida.
+
+Se descermos um pouco, vamos ver que /topicos está aqui; 
+
+temos também as métricas de usuários.
+
+Tenho também autenticações com erro. 
+
+Voltando ao que interessa, se olharmos para uma métrica, vou procurar pela métrica de log, que talvez seja a mais simples de explicar no momento.
+
+Vamos pegar essa métrica aqui, **logback_events_total**. 
+
+### metric name
+Toda métrica tem três componentes básicos. O primeiro é o metric name, é o nome da métrica. 
+
+Aqui, o metric name que nós temos é o logback_events_total. 
+
+Se eu executo essa consulta no Prometheus, eu tenho alguns retornos.
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/7.PNG)
+
+Se eu pegar um desses retornos específicos - o primeiro, por exemplo - e fazer essa consulta, eu tenho só o retorno dessa consulta específica com esses atributos. 
+
+https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/8.PNG
+
+Vamos entender o que são esses atributos e o que é o retorno da consulta.
+
+Então, tenho o metric name, que nesse caso é o logback_events_total, e logo após o metric name tenho labels, rótulos. 
+
+### labels
+
+```
+{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", level="error"}
+```
+Esses rótulos vão identificar qual é a série temporal que você quer consultar.
+
+Até agora vimos duas entidades aqui: metric name e labels. 
+
+Podem existir vários labels configurados, eles vão estar nessa configuração similar a uma variável, de chave-valor, {application=”app-forum-api”,instance="app-forum-api:8080",job-"app-forum-api",level="error"}.
+
+### sample
+À direita dos labels, eu tenho o sample, que é o resultado dessa consulta, que está aqui, 0. 
+
+Se eu mudar alguns desses labels, por exemplo, eu não quero olhar o level debug do log, eu quero olhar o info: 
+
+logback_events_total{application=”app-forum-api”,instance="app-forum-api:8080",job-"app-forum-api",level="info"}
+
+Vamos fazer a consulta dele, eu tenho 43 como retorno, meu sample como 43.
+
+Já entendemos que existe metric name, que existe label e que existe o sample, que é o resultado da consulta sobre aquela métrica com aquele metric name e aqueles labels específicos.
+
+Isso está fácil de entender. 
+
+Agora nós entramos no ponto de quais são os tipos de dados que uma métrica pode ter – qual tipo de dado é aquela métrica? 
+
+### Tipos de Dados no Prometheus
+No Prometheus, temos quatro tipos de dados.
+
+#### Instant Vector
+Temos o instant vector, que é um vetor instantâneo; 
+
+#### Range Vector
+temos o range vector, que é um vetor de uma série temporal; 
+
+#### Scalar
+temos um dado do tipo Scalar, que é um float simples, um ponto flutuante; 
+
+#### String
+e temos o string, **que basicamente não é utilizado**, a própria documentação do Prometheus diz isso, que não é comumente utilizado.
+
+Vamos só focar nos três tipos de dados mais utilizados no Prometheus. 
+
+O que é um instant vector? 
+
+É um vetor instantâneo, esse vetor está sendo exibido agora para vocês na tela, ao executar logback_events_total.
+
+Quando eu olho para essa métrica, logback_events_total, ela me retorna um vetor. 
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/9.PNG)
+
+Esse vetor está aqui embaixo, cada uma dessas linhas seria um índice desse vetor. 
+
+Eu teria o índice 0, 1, 2, 3 e 4. Vamos simplificar dessa maneira.
+
+Cada um desses elementos que estão dentro desse vetor **é uma série temporal**. 
+
+Eu tenho aqui 5 séries temporais que estão armazenadas nessa métrica logback_events_total e, quando eu faço uma consulta para essa métrica, esse vetor retorna para mim.
+
+O que gera esses vetores e como eu faço a distinção entre cada um? 
+
+Através de levels, são os labels que vão fazer essa distinção. 
+
+Se olharmos para essa série temporal específica, vou pegar novamente o debug, você vai notar o seguinte.
+
+Qual é a diferença de uma para outra? 
+
+É o level. 
+
+Essa métrica está relacionada ao log, e o log tem níveis de logs específicos que a JVM consegue externalizar através do Actuator e o Prometheus acaba fazendo a interface através do Micrometer.
+
+Nós conseguimos ter acesso à essa informação através de uma métrica com um label de level distinto. 
+
+Então, tivemos, na subida da aplicação, uma quantidade de info, uma quantidade de erros e uma quantidade de warnings. 
+
+Não tivemos log level de debug aqui, nem de trace.
+
+Isso é um instant vector, um vetor de tempo. 
+
+Se você olhar em “Evaluation time”, você vai ver o momento da consulta. 
+
+Então, falamos sobre o primeiro tipo de dado que é o instant vector.
+
+Agora, vamos falar sobre o range vector. 
+
+Para chegarmos nesse ponto do range vector, eu vou tirar tudo e colocar 1 minuto,[1m], entre colchetes - logback_events_total[1m]. 
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/10.PNG)
+
+A partir do momento que eu faço isso, estou trabalhando com o range vector.
+
+Notem que teve uma transformação aqui, eu estou olhando justamente para esse timestamp, posso tirá-lo e refazer a consulta, vai dar na mesma. 
+
+O que estou trazendo é o último minuto dentro desse timestamp.
+
+Esse foi o timestamp de execução da consulta, eu quero o último minuto. 
+
+No último minuto, eu tenho essas informações que voltaram. 
+
+Notem que o range vector não seria uma matriz, não temos um vetor multidimensional, mas temos, em cada série temporal, um “vetor” que traz um valor específico a cada scrape time do Prometheus.
+
+Vamos lembrar a nossa configuração. 
+
+Se eu abrir aqui e for em “Configuration”, você vai ver que o nosso job app-forum-api tem o scrape de 5s. 
+
+Então, a cada 5 segundos o Prometheus vai lá e bate no endpoint para trazer as métricas.
+
+Justamente aqui, em 1 minuto, nós tivemos essa quantidade aqui, 12 consultas, cada uma a 5 segundos, o que equivale a 60 segundos de trabalho do Prometheus buscando métricas.
+
+Alguns estão com valores e outros não, não está dando para pegarmos uma mudança aqui nesses valores, mas normalmente vamos enxergar mudanças.
+
+https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/11.PNG
+
+Aqui tem uma notação meio estranha, que é o unix timestamp. 
+
+Se você quiser entender o que é isso, no Linux é fácil – se você estiver no Windows, deve ter uma forma fácil de você fazer no PowerShell, ou você vai no browser e dá uma "googlada" “unix timestamp” que você vai encontrar um jeito de converter.
+
+Então, quando falamos em range vector, estamos falando de um range de tempo dentro de uma série temporal.
+
+Eu posso facilitar um pouco isso, posso olhar um intervalo específico? 
+##### Subquery
+Posso, através de uma subquery. 
+
+Eu quero olhar os últimos 5 minutos e quero ver apenas o último minuto. Está aqui, consigo fazer isso: logback_events_total[5m:1m].
+
+Um minuto ficou muita coisa, quero olhar os 30 segundos. 
+
+Também consigo: 
+
+logback_events_total[5m:30s]
+
+Então, dentro dos últimos 5 minutos, eu olhei os 30 segundos.
+
+É bem simples de se trabalhar, vamos ter funções que vamos ver mais a frente que vão aproveitar melhor o range vector. 
+
+Tem um detalhe, estamos vendo uma saída que é tabulada, e se quisermos ir para gráfico?
+
+Não é possível. 
+
+Se você ler isso, você vai ver que **“houve um erro executando a consulta, o tipo ‘range vector’ é inválido para esse tipo de consulta, tente com um Scalar ou um vetor instantâneo”**.
+
+Isso significa o quê? 
+
+Que eu não posso formar um gráfico no Prometheus quando eu tiver uma saída que possui mais de um valor. 
+
+Ou ela tem que ser um instant vector ou um dado Scalar. 
+
+O dado Scalar, só lembrando, é um float.
+
+Vou executar dessa maneira, 
+
+logback_events_total
+
+Eu tive esse retorno, ele formou um gráfico para mim, está bem simples, mas formou o gráfico. 
+
+Aqui eu tenho uma consulta que traz para mim um instant vector. 
+
+Sendo um instant vector ou sendo um dado Scalar, eu consigo retorno.
+
+Voltando, o que faltou é falarmos sobre o Scalar. 
+
+O dado Scalar é, basicamente, um float. 
+
+Posso encontrar qualquer um aqui, por exemplo, deixa eu olhar para alguma coisa de conexões.
+
+hikaricp_connections_idle
+
+Tenho um dado que vai me retornar um valor que é um float simples e que vai poder ser visualizado. 
+
+Se eu for para o modo gráfico, eu consigo enxergar também um gráfico.
+
+Não vamos falar de string porque isso não cabe dentro do nosso conteúdo e dificilmente você vai ver algum caso de uso para string envolvendo o Prometheus. 
+
+Isso pode ser encontrado na própria documentação.
+
+Eu aconselho que você aprofunde mais utilizando essa documentação, vamos estender esse assunto, só que não vamos esgotá-lo. 
+
+Então, acho muito interessante você consumir a documentação e aprofundar um pouco mais.
+
+Agora que entendemos a anatomia de uma métrica, entendemos os três componentes – metric name, label e o retorno da consulta que é o sample.
+
+E entendemos também os tipos de dados que o Prometheus utiliza.
+
