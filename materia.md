@@ -54,6 +54,14 @@ terminado em
       - [Scalar](#scalar)
       - [String](#string)
         - [Subquery](#subquery)
+  - [Tipos de Métricas](#tipos-de-métricas)
+    - [Counter](#counter)
+    - [Gauge](#gauge)
+    - [Histogram](#histogram)
+      - [histogram quantile](#histogram-quantile)
+    - [Summary](#summary)
+      - [Quantiles configuraveis](#quantiles-configuraveis)
+  - [](#)
 
 
 ## Apresentaçao
@@ -2194,3 +2202,198 @@ Agora que entendemos a anatomia de uma métrica, entendemos os três componentes
 
 E entendemos também os tipos de dados que o Prometheus utiliza.
 
+## Tipos de Métricas
+Nós abordamos todos esses assuntos e, para complementar isso, é de suma importância que você entenda quais são os tipos de métricas que o Prometheus trabalha.
+
+Eu vou recorrer à documentação oficial. 
+
+Para você chegar na documentação oficial, é bem simples, é só ir em “Help” no painel superior do Prometheus, você abre em outra aba e você vai estar na documentação.
+
+Na documentação, você pesquisa por “metric types”.
+
+https://prometheus.io/docs/concepts/metric_types/#metric-types
+
+O Prometheus trabalha com quatro tipos de métrica.
+
+Tem o tipo “Counter”, “Gauge”, “Histogram” e “Summary”. 
+
+### Counter
+Vamos falar primeiro do “Counter". 
+
+**A métrica do tipo counter é uma métrica que é crescente e sempre será incrementada.**
+
+Então, é uma métrica cumulativa. 
+
+Qual é a desvantagem que temos no counter? 
+
+Se a sua aplicação for reinicializada, essa métrica vai zerar, só que ela vai zerar dentro do seu tempo atual de execução da aplicação.
+
+Você vai conseguir consultar os resultados anteriores que estão no TSDB em outra série temporal, sem problema, porém, o valor atual da métrica vai ser zerado.
+
+**Não é aconselhável que você usar o tipo de métrica counter para trabalhar com valores que vão variar, que vão subir ou descer.** 
+
+Sempre use com valores incrementais.
+
+Se formos olhar o tipo counter no endpoint de métricas, você vai ver que tem diversos exemplos. 
+
+```
+# TYPE jvm_classes_unloaded_classes_total counter
+jvm_classes_unloaded_classes_total{application="app-forum-api",} 1.0
+```
+
+Temos aqui a métrica personalizada que nós criamos, auth_user_success_total. 
+
+Posso colocar essa métrica no Prometheus e ela sempre vai ser incrementada.
+
+Eu posso procurar também o erro, nós também criamos uma métrica para a condição de erro, está aí, auth_user_error_total. 
+
+É legal entender por que nós trabalhamos com o counter, já que em um momento vamos ter usuários logados e em outro não.
+
+Nós trabalhamos com essa métrica porque é interessante você ter um histórico e entender, em um período específico, quantos usuários fizeram login, em um range específico de tempo.
+
+No momento atual da nossa aplicação, nós vamos utilizar uma lógica através de alguns operadores e funções que vão trazer para nós o valor exato do momento da consulta.
+
+O counter é justificado para esse uso que nós fizemos por conta de você poder ter uma avaliação de uma janela grande de tempo e entender qual era a média de autenticações que você teve em um período tal e quanto você está tendo hoje.
+
+Esse seria o motivo de termos o tipo de counter para autenticações e erros de autenticação.
+
+Se eu procurar uma métrica, por exemplo, a do log, também é um tipo counter o logback_events_total. 
+
+É legal porque, se você procurar, o próprio Prometheus vai dizer para você qual o tipo da métrica.
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/12.PNG)
+
+Então, estamos conversados sobre o que é um counter. 
+
+ele vai contando e fazendo a divisão pelo log level, temos aqui debug, error, info, trace e warn. 
+
+Ao todo, são cinco níveis de log que conseguimos ter e ele vai contando os eventos que se categorizam sobre o nível de log específico em uma série temporal específica.
+
+### Gauge
+Já entendemos o que é um tipo de métrica counter, vamos falar sobre o "Gauge". 
+
+Lembra que eu falei que o counter não deve ser utilizado se a sua métrica for variar, se ela vai ter um valor inferior e depois superior, se ela vai subir e descer?
+
+O gauge já trabalha nesse ponto, **ele é direcionado para valores que vão variar no decorrer da execução do seu sistema**. 
+
+Logicamente, o gauge é uma métrica que se encaixa muito bem para que possamos mensurar consumo de CPU, consumo de memória, número concorrente de requisições em um período de tempo específico e fazer comparações.
+
+A utilização do gauge é para valores variáveis. 
+
+Se dermos uma procurada aqui, “gauge”, temos, por exemplo, o estado de threads da JVM. 
+
+Por exemplo, se eu fizer essa consulta: jvm_threads_states_threads{application="app-forum-api",state="runnable"}. Vou tirar o state=runnable porque estamos pegando as métricas que estão em estado runnable – ao todo, são 7.
+
+Se mudarmos aqui, vou procurar por outro state, vou colocar timed-waiting, eu tenho 8. 
+
+Esses valores vão ser modificados conforme a aplicação for consumida, conforme ela tiver chamadas de funções e esse tipo de coisa.
+
+Se procurarmos por outra, eu tenho aqui conexões da JDBC em estado idle. 
+
+Deixa eu encontrar outra, aqui também é sobre thread, buffer. 
+
+Está aqui, contagem de CPU. 
+
+system_cpu_counter, essa métrica eu não acho interessante porque ela pega o número de núcleos de um CPU, então é uma coisa que, no nosso caso, não vamos ter aplicabilidade.
+
+Agora aqui, uma métrica bem legal é a utilização do CPU para o processo que a JVM está executando: process_cpu_usage. 
+
+Esse valor vai subir, vai descer, vai variar conforme a execução da nossa aplicação.
+
+Até aqui, acho que está tranquilo, são dois tipos de métricas bem simples: o counter, o valor incremental – se a aplicação for inicializada, ele é zerado; e o gauge, uma métrica que vai variar, vai sofrer incremento e decremento no decorrer da execução do sistema.
+
+### Histogram
+Aí chegamos em uma métrica mais complicada, do tipo "Histogram". 
+
+**O histogram traz observações que estão mais relacionadas à duração e ao tamanho de resposta.**
+
+Ele tem uma configuração de alocação de séries temporais em buckets. 
+
+Esses buckets vão corresponder a algumas regras que vamos definir. 
+
+No nosso caso, nós já definimos, porque criamos uma métrica do tipo histogram quando trabalhamos no application properties e definimos aquela métrica de SLA diretamente no application.prod.properties da aplicação.
+
+```
+management.metrics.distribution.sla.http.server.requests=50ms,100ms,200ms,300ms,400ms,500ms, 1s
+```
+
+Existem N buckets, cada bucket tem uma configuração que nós setamos lá no application properties, e ele está relacionado à duração de uma requisição e ao tempo de resposta que eu tenho.
+
+Além disso, o histogram traz para nós a soma total dos eventos observados em questão de tempo – quantos segundos, por exemplo – e traz também a contagem de todos os eventos.
+
+Para entendermos um pouco melhor isso, podemos procurar aqui http_server_requests_seconds histogram. 
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/13.PNG)
+
+Abaixo dele, temos os buckets, você vai ver as linhas do bucket, e você vai ver count e sum.
+
+Vou pegar uma específica, pode ser essa mesma, http_server_requests_seconds_bucket. 
+
+No caso, estou distinguindo por label. 
+
+A métrica é a mesma, o que muda são os labels. 
+
+Além de ter os labels distintos para um endpoint específico, eu tenho o bucket definido em uma regra bem lógica. 
+
+Você vai entendê-la agora.
+
+Eu copiei a métrica, que é http_server_requests_seconds_bucket e aqui eu tenho todos esses labels. 
+
+Eu não preciso da maioria deles, eu posso retirar toda essa informação e deixar só status="200",uri="/topicos/(id)", aí tem essa regra que é uma condição, le.
+
+**“Less or equal”, “menor ou igual”.** 
+
+Se olharmos para esse valor aqui, 0.05, temos que entender que esse valor está em milissegundos, então tenho 50 milissegundos. 
+
+Se eu executar (
+  http_server_requests_seconds_bucket{status="200",uri="/topicos/(id)",le="0.05"}
+), ele trouxe “409”, então tenho 409 requisições nesse momento, para “topicos/id”, que estão menores ou iguais a 50 milissegundos.
+
+Colocamos le="0.1", a 100 milissegundos tem mais, são 411; 
+
+a 200 milissegundos, 412; 
+
+a 300, também “412”; 
+
+a 500, do mesmo jeito; 
+
+e com 1 segundo, le="1.0", temos até 1 segundo, 415 requisições.
+
+Se eu tirar esse le=”1.0” e executar, ele vai trazer todas as séries temporais que eu tenho relacionadas aos buckets. 
+
+Aqui é acima de 1 segundo, é infinito e além, esse +inf, é infinito, é acima de 1 segundo.
+
+Então, uma métrica do tipo histogram vai nos auxiliar a fazer esse tipo de medição que é importantíssima para entendermos o tempo de resposta da nossa API e, principalmente, se estamos cumprindo o nosso SLA.
+
+Na verdade, se estamos cumprindo com o nosso SLO, que é o nosso objetivo de nível de serviço que vai ser mensurado com base no nosso SLA. 
+
+Aqui, entraria o nosso indicador do nosso nível de serviço que, de fato, é a métrica.
+
+Voltando, eu posso fazer uma modificação, posso colocar a soma, sum, qual a soma de todos os segundos que eu tenho dessas requisições: 
+
+http_server_requests_seconds_sum{status="200",uri="/topicos/(id)"}.
+
+Está aqui, trouxe um valor que é difícil de entender sem usar uma função. 
+
+E posso trazer a contagem, o número total, sem distinções relacionadas a buckets (
+  http_server_requests_seconds_count{status="200",uri="/topicos/(id)"}
+). 
+
+Tenho 432 requisições.
+
+#### histogram quantile
+O histogram também é uma métrica cumulativa. 
+
+Além de ela ser cumulativa, ela tem uma função que é bem interessante utilizarmos, que é o histogram_quantile, que trabalha com quantiles, então você consegue fazer especificações de quantiles através dessa função e trabalhar bem com ela. Vamos fazer isso mais a frente.
+
+### Summary
+O summary é uma métrica muito similar ao histogram, a própria documentação diz isso, só que ele é mais usualmente utilizado para você ter a duração de uma requisição e o tamanho da resposta que você tem para uma requisição.
+
+Além disso, você consegue ter tanto o somatório quanto a contagem – o somatório de segundos da métrica e a contagem total de eventos que foram captados na métrica.
+
+#### Quantiles configuraveis
+Uma coisa bem legal é que você também pode calcular quantiles configuráveis de uma forma customizada. 
+
+Você consegue fazer isso dentro de uma janela de tempo.
+
+## 
