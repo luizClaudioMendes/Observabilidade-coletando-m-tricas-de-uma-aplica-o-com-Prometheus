@@ -33,8 +33,15 @@ terminado em
   - [Preparando a API para a conteinerização](#preparando-a-api-para-a-conteinerização)
   - [Subindo a stack com API e Prometheus](#subindo-a-stack-com-api-e-prometheus)
   - [Conhecendo as configurações do Prometheus](#conhecendo-as-configurações-do-prometheus)
-    - [scrape interval](#scrape-interval)
-    - [Prometheus job](#prometheus-job)
+    - [Graph](#graph)
+    - [Alerts](#alerts)
+    - [Status](#status)
+    - [Help](#help)
+    - [Prometheus configuration em desenv](#prometheus-configuration-em-desenv)
+    - [Prometheus.yaml](#prometheusyaml)
+      - [scrape interval](#scrape-interval)
+      - [Prometheus job](#prometheus-job)
+  - [](#)
 
 
 ## Apresentaçao
@@ -1554,35 +1561,44 @@ Agora, vamos entender um pouco melhor essa interface web do Prometheus e entende
 
 Para você acessar o Prometheus, é “http://localhost:9090”. 
 
+### Graph
 Acessando o Prometheus, você vai cair diretamente aqui, nessa tela, e vai ver que tem aqui o histórico, que pode ser habilitado para consultas; a utilização do tempo local, você pode habilitá-lo ou manter o padrão.
 
-
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/2.PNG)
 
 Você vê que existem, nesse painel, algumas opções. 
 
-Aqui, você encontra basicamente o tempo em que você vai executar uma consulta, então você pode definir o tempo em que você quer rodar aquela consulta.
+Em evaluation time, você encontra basicamente o tempo em que você vai executar uma consulta, então você pode definir o tempo em que você quer rodar aquela consulta.
 
 Existe o modo tabulado de exibição e o modo gráfico, em que nós vamos acabar vendo um gráfico mesmo. 
 
-Vamos entender essas opções de cima. Também tem a opção de adicionar painéis.
+Também tem a opção de adicionar painéis.
+
+Vamos entender essas opções de cima. 
 
 Futuramente, não vamos trabalhar com essa interface, porque ela é muito simples para o propósito que nós temos, mas ela é extremamente funcional para você validar uma consulta, para você construir uma métrica, fazer um indicador.
 
 Além de ter alguns outros recursos que vamos utilizar na hora de verificar se temos uma regra de alerta funcional, na hora de verificar se o service discovery está olhando para todas as aplicações que nós configuramos etc.
 
-[3]
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/3.PNG)
 
+### Alerts
 Clicando em “Alerts”, não temos nenhum alerta configurado ainda, isso vamos fazer mais para frente, em outro capítulo, quando trabalharmos o Alertmanager.
 
-Em “Graph”, nós voltamos para o mesmo lugar em que estávamos anteriormente; em “Status”, temos algumas informações legais, como runtime e informação de build – não vou aprofundar muito nisso, é só mesmo para você entender o que é cada uma dessas opções.
+### Status
+em “Status”, temos algumas informações legais, como runtime e informação de build – não vou aprofundar muito nisso, é só mesmo para você entender o que é cada uma dessas opções.
 
-Em TSDB status está o status do TSBD, que é o Time Series Database. Você pode dar uma olhada com mais calma e entender essa configuração, vou deixar um link da documentação. No momento, isso não vai fazer diferença para nós.
+Em TSDB status está o status do TSBD, que é o Time Series Database. 
+
+Você pode dar uma olhada com mais calma e entender essa configuração. 
+
+No momento, isso não vai fazer diferença para nós.
 
 Em Command-line flags estão as flags de linha de comando que você pode usar para subir o Prometheus na hora da execução dele. Nós usamos algumas naquele Docker Compose.
 
 tem diversas flags que podem ser utilizadas na hora de subir o serviço.
 
-4
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/4.PNG)
 
 tem a “Configuração”. Nessa configuração, vamos olhar o arquivo que gerou essa configuração. Essa configuração está sendo derivada de um arquivo, já vamos olhar para ele, mas é legal você entender que essa configuração você vai poder validar aqui.
 
@@ -1590,7 +1606,7 @@ Você vem em “Status > Configuration” e você vai ver essa configuração.
 
 Em “Regras”, não tem nenhuma regra habilitada, não temos o que exibir.
 
-5 
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/5.PNG)
 
 Quando você vem em “Targets”, você pode ver quais são os targets que o Prometheus está olhando, quais são os alvos de coleta. 
 
@@ -1600,31 +1616,29 @@ Aqui, temos um endpoint que é o próprio Prometheus, ele olha para ele mesmo.
 
 O Prometheus monitora ele mesmo e "plota" essas métricas. 
 
-Se colocarmos aqui “localhost:9090” – o Prometheus roda na porta “9090” TCP – e colocarmos um “localhost:9090/metrics”, vamos pegar as métricas do próprio Prometheus.
+Se colocarmos “localhost:9090” – o Prometheus roda na porta “9090” TCP – e colocarmos um “localhost:9090/metrics”, vamos pegar as métricas do próprio Prometheus.
 
 Como é uma aplicação feita em Go, você vai ver muitas métricas relacionadas à execução do Go. 
 
 Tem bastante métricas, eu não vou entrar no mérito das métricas do Prometheus, mas é interessante você entender que você pode, em algum momento, ter uma curiosidade do funcionamento do Prometheus, de algum aspecto que parece que não está interessante e olhar as métricas dele.
 
-Se você for em “Unhealthy”, não tem nenhum. 
+Se você for em “Unhealthy”, mostra as aplicaçoes que nao estao funcionando corretamente. 
 
 Basicamente, está tudo certo. 
 
-6
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/6.PNG)
 
 Aqui, o “Service Discovery”. Para onde estamos olhando no momento, é o “app-forum-api” e para o próprio “prometheus-forum-api”.
 
-Aqui, temos o “Help”, que nos leva direto para a documentação do Prometheus. 
+### Help
+temos o “Help”, que nos leva direto para a documentação do Prometheus. 
 
 Agora que já falamos um pouco da interface gráfica do Prometheus – só ressaltar que é aqui que vamos fazer as consultas das nossas métricas. 
 
 vamos focar nessa visualização e, principalmente, em “Graph”.
 
-Estávamos falando do ngnix, na aula de apresentação, está aqui o proxy_pass configurado. 
-
-Agora, vamos subir o nível e vamos entrar no prometheus, cd ../prometheus/
-
-**Aqui no prometheus, tem uma coisa que eu jamais faria em produção, mas, nesse ambiente "conteinerizado", foi feito. **
+### Prometheus configuration em desenv
+**Aqui no prometheus, tem uma coisa que eu jamais faria em produção, mas, nesse ambiente "conteinerizado", foi feito.**
 
 O diretório prometheus_data está com permissão 777. 
 
@@ -1638,7 +1652,24 @@ Para esse diretório específico, eu liberei um chmod 777 prometheus_data, foi o
 
 Dificilmente você vai precisar fazer alguma mudança porque estamos falando de uma "conteinerização" em Linux. Enfim, seguindo, além desse diretório, temos o mais importante da aula que é o prometheus.yml.
 
+### Prometheus.yaml
 ```
+global:
+  scrape_interval: 5s
+scrape_configs:
+- job_name: prometheus-forum-api
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  metrics_path: /metrics
+  scheme: http
+  static_configs:
+  - targets:
+    - prometheus-forum-api:9090
+- job_name: app-forum-api
+  metrics_path: /actuator/prometheus
+  static_configs:
+  - targets:
+    - app-forum-api:8080
 
 ```
 
@@ -1646,7 +1677,7 @@ Esse arquivo de configuração gerou aquela configuração que nós vimos lá na
 
 Aqui, o que é importante? 
 
-### scrape interval
+#### scrape interval
 scrape_interval, que é uma característica global nessa configuração e em qualquer outra.
 
 O que muda aqui? 
@@ -1661,7 +1692,7 @@ Eu posso mudar isso?
 
 Posso, é só fazer uma configuração diferente em algum job. 
 
-### Prometheus job
+#### Prometheus job
 Como é a divisão disso? 
 
 Eu tenho aqui scrape_interval, que é uma característica global nessa configuração, e tenho scrape_configs, que são as configurações de scrape personalizadas.
@@ -1669,7 +1700,14 @@ Eu tenho aqui scrape_interval, que é uma característica global nessa configura
 Se eu quiser sobrescrever isso e mudar o valor em alguma scrape_config, eu tenho que trabalhar dentro do escopo de um job. 
 
 ```
-
+- job_name: prometheus-forum-api
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  metrics_path: /metrics
+  scheme: http
+  static_configs:
+  - targets:
+    - prometheus-forum-api:9090
 ```
 
 
@@ -1696,7 +1734,11 @@ Aqui, em metrics_path, o path, o endpoint em que a métrica está.
 Aqui, tenho outro job_name que, nesse caso, é o app-forum-api.
 
 ```
-
+- job_name: app-forum-api
+  metrics_path: /actuator/prometheus
+  static_configs:
+  - targets:
+    - app-forum-api:8080
 ```
 
 O metrics_path dele é em /actuator/prometheus e a static_configs tem um target que é o app-forum-api:8080. 
@@ -1712,7 +1754,17 @@ Vamos ver tópicos mais avançados até o fim do curso, mas, no momento, isso é
 Por último, vamos só dar uma olhada no Docker Compose para você entender que, no momento de subida do contêiner, nós estamos utilizando esses arquivos.
 
 ```
-
+ volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
 ```
 
 O local exato da configuração do prometheus.yml, do arquivo, é em /etc/prometheus/prometheus.yml, e aqui é onde está o TSDB, é um diretório que está saindo da nossa máquina, é aquele diretório que eu tive que dar uma permissão muito aberta para que o usuário do Prometheus pudesse manipulá-lo dentro do contêiner.
@@ -1725,3 +1777,4 @@ Então, aqui tem algumas flags que estão sendo utilizadas que podem ser encontr
 
 Então, é isso, foi só uma navegação pelo Prometheus, entendendo algumas configurações dele. Vamos aprofundando, vamos trabalhando mais nisso e olhando para o que interessa no decorrer do curso.
 
+## 
