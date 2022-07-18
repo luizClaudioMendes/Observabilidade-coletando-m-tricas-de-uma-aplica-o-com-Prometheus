@@ -12,7 +12,29 @@ terminado em
   - [Monitoramento](#monitoramento)
     - [Metricas](#metricas)
   - [Configurando o ambiente](#configurando-o-ambiente)
-  - [](#)
+  - [Externalizando métricas com Actuator](#externalizando-métricas-com-actuator)
+  - [Expondo métricas para o Prometheus](#expondo-métricas-para-o-prometheus)
+  - [Métricas da JVM](#métricas-da-jvm)
+    - [Memória](#memória)
+    - [Logs](#logs)
+    - [Hikaricp -- Conexoes e Banco de dados](#hikaricp----conexoes-e-banco-de-dados)
+    - [Process](#process)
+    - [JVM](#jvm)
+    - [CPU](#cpu)
+    - [JVM Memory](#jvm-memory)
+    - [hikarycp -- tempo para aquisicao de conexao](#hikarycp----tempo-para-aquisicao-de-conexao)
+    - [JVM Threads](#jvm-threads)
+    - [SLA](#sla)
+    - [JVM classes](#jvm-classes)
+    - [timeout de conexao com o database](#timeout-de-conexao-com-o-database)
+    - [tempo de criaçao de uma conexao com o database](#tempo-de-criaçao-de-uma-conexao-com-o-database)
+    - [utilizaçao de CPU](#utilizaçao-de-cpu)
+  - [Métricas personalizadas](#métricas-personalizadas)
+  - [Preparando a API para a conteinerização](#preparando-a-api-para-a-conteinerização)
+  - [Subindo a stack com API e Prometheus](#subindo-a-stack-com-api-e-prometheus)
+  - [Conhecendo as configurações do Prometheus](#conhecendo-as-configurações-do-prometheus)
+    - [scrape interval](#scrape-interval)
+    - [Prometheus job](#prometheus-job)
 
 
 ## Apresentaçao
@@ -103,7 +125,7 @@ Estou com o Eclipse aberto, ele é uma dependência para que você siga o capít
 
 No painel à esquerda, vou em “Import Projects...” e vou procurar por um projeto Maven já existente.
 
-Dentro do prometheus-grafana, você vai no subdiretório app, em que existe um arquivo com o XML que o Eclipse vai reconhecer automaticamente como sendo o arquivo de um projeto.
+Dentro do prometheus-grafana, você vai no subdiretório app, em que existe um arquivo com o XML que o Eclipse vai reconhecer automaticamente como sendo o arquivo de um projeto (pom.xml).
 
 Essa é a nossa API, a “forum”. 
 
@@ -228,6 +250,27 @@ Ele vai estar em uma rede local do Docker Compose, em uma rede do Docker, mas el
 
 Aqui tem as configurações do MySQL e a dependência dele. 
 
+```
+mysql-forum-api:
+    image: mysql:5.7
+    container_name: mysql-forum-api
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: 'forum'
+      MYSQL_USER: 'forum'
+      MYSQL_PASSWORD: 'Bk55yc1u0eiqga6e'
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+      MYSQL_ROOT_HOST: '%'
+    volumes:
+      - ./mysql:/docker-entrypoint-initdb.d
+    ports:
+      - 3306:3306
+    networks:
+      - local
+    depends_on:
+      - redis-forum-api
+```
+
 Ele precisa que o Redis suba primeiro para que ele possa subir depois. 
 
 Essas são as dependências básicas de comunicação dessa API
@@ -316,4 +359,1369 @@ Tudo isso nós não sabemos, nós estamos cegos.
 
 Então, vamos fazer a primeira parte da camada de observabilidade para sairmos do escuro e entendermos o funcionamento da aplicação, iniciando pelo Actuator.
 
-## 
+## Externalizando métricas com Actuator
+
+Agora, vamos configurar o Actuator e enfim tornar a nossa aplicação observável – ou, pelo menos, iniciar esse trajeto.
+
+nós conseguimos implantar o ambiente e subir a aplicação. 
+
+A primeira coisa que eu peço a você é que você dê uma olhada na documentação do Actuator. 
+
+É só você digitar no Google “Actuator” e você vai encontrar em um dos primeiros resultados a documentação do Spring dizendo como você vai habilitar o Actuator.
+
+[documentaçao do actuator](https://docs.spring.io/spring-boot/docs/3.0.x/actuator-api/htmlsingle/)
+
+[Baeldung](https://www.baeldung.com/spring-boot-actuators)
+
+O Actuator entra como uma dependência. 
+
+No nosso caso, estamos utilizando o Maven. 
+
+```
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+Se estiver usando Gradle, é outra forma de implantação, mas, no nosso caso, é o Maven.
+
+Tendo feito isso, é necessário que façamos alguns ajustes na nossa aplicação. 
+
+Nesse caso, não vamos mexer no código da aplicação agora. 
+
+No painel à esquerda, vamos em src/main/resources, vamos no application-prod.properties e aqui tem diversas configurações.
+
+```
+server.port:8080
+
+# Redis cache config 
+spring.cache.type=redis
+spring.redis.host=localhost
+spring.redis.port=6379
+
+# datasource
+spring.datasource.driver-class-name=com.mysql.jdbc.Driver
+spring.datasource.url=jdbc:mysql://localhost:3306/forum
+spring.datasource.username=forum
+spring.datasource.password=Bk55yc1u0eiqga6e
+
+# jpa
+spring.jpa.database = MYSQL
+spring.jpa.database-platform=org.hibernate.dialect.MySQL5InnoDBDialect
+spring.jpa.hibernate.ddl-auto=none
+spring.jpa.properties.hibernate.format_sql=true
+
+# jwt
+forum.jwt.secret=rm'!@N=Ke!~p8VTA2ZRK~nMDQX5Uvm!m'D&]{@Vr?G;2?XhbC:Qa#9#eMLN\}x3?JR3.2zr~v)gYF^8\:8>:XfB:Ww75N/emt9Yj[bQMNCWwW\J?N,nvH.<2\.r~w]*e~vgak)X"v8H`MH/7"2E`,^k@n<vE-wD3g9JWPy;CrY*.Kd2_D])=><D?YhBaSua5hW%{2]_FVXzb9`8FH^b[X3jzVER&:jw2<=c38=>L/zBq`}C6tT*cCSVC^c]-L}&/
+forum.jwt.expiration=86400000
+
+info.app.name=@project.name@
+info.app.description=@project.description@
+info.app.version=@project.version@
+info.app.encoding=@project.build.sourceEncoding@
+info.app.java.version=@java.version@
+
+```
+
+Tem a porta em que a aplicação sobre, tem a configuração do Redis, tem a configuração do MySQL, tem o JPA para conexão e tem o token jwt, porque essa aplicação usa um token.
+
+Para algumas ações de excluir um tópico, criar um tópico, é necessário ter um token que é gerado através de uma autenticação. Estamos falando de uma API Rest.
+
+O que vou fazer agora? 
+
+Em qualquer espaço que você encontrar, pode colocar actuator. 
+
+```
+# actuator
+management.endpoint.health.show-details=always
+management.endpoints.web.exposure.include=*
+```
+
+A primeira linha que eu inseri aqui foi o management.endpoint.health.show-details.
+
+Está como always, então vai mostrar todos os detalhes, e aqui eu tenho o web.exposure. 
+
+Aqui está um asterisco; se eu deixar com asterisco, ele vai basicamente colocar todas as informações relacionadas a JVM e tudo que estiver relacionado à aplicação, ao gerenciamento da aplicação pela JVM.
+
+Quem eu vou disponibilizar é um endpoint chamado health, um endpoint chamado info e um endpoint chamado metrics. 
+
+```
+# actuator
+management.endpoint.health.show-details=always
+management.endpoints.web.exposure.include=health,info,metrics
+```
+
+Então: management.endpoints.web.exposure.include=health,info,metrics.
+
+Esses três estão de bom tamanho, são o que nós precisamos. 
+
+O nosso foco vai estar sobre o metrics, mas o health é legal se você tem um endpoint que pode ser usado para health check, dependendo de onde você estiver rodando a sua aplicação.
+
+E o info é legal porque você consegue ter as informações dessa aplicação, informações interessantes para você, não para o público externo. 
+
+**health, info e metrics são internos, não devem ser expostos publicamente.**
+
+Essa aplicação, quando estiver rodando na stack do Docker Compose, vai estar com esses endpoints fechados. 
+
+Para acessarmos essa aplicação, vamos ter que passar por um proxy que também vai ser implantado no próximo capítulo.
+
+Tendo cumprido esses pré-requisitos, eu vou para o Terminal. 
+
+vou rodar um mvn clean package para "rebuildar" essa aplicação.
+
+Nos contêineres, não é necessário mexer. 
+
+vou no start.sh novamente e vou rodar a aplicação.
+
+Se você olhar, essa linha da inicialização, só para você ter uma ideia, de repente você está no Windows e o bin/bash não vai funcionar para você.
+
+Você pode rodar 
+
+```
+java -jar -Dspring.profiles.active=prod target/forum.jar
+
+```
+
+na linha de comando do cmd do próprio Windows, contanto que você esteja posicionado no path em que está o app. 
+
+Você tem que estar dentro do diretório app, aí você pode chamar o Java dessa maneira que ele vai encontrar, dentro de target, o forum.
+
+Você só vai ter que fazer isso no Windows, colocar uma contrabarra (target\forum) e não a barra (/), porque o Windows não entende a barra que, no Linux, faz distinção entre um diretório e outro. No MacOS, isso não muda nada.
+
+Voltando, a aplicação subiu, foi "startada" e, por fim, eu tenho “topicos”, tenho “http://localhost:8080/topicos/” e um ID qualquer. 
+
+Agora tenho “http://localhst:8080/actuator”.
+
+```
+{
+"_links": {
+"self": {
+"href": "http://localhost:8080/actuator",
+"templated": false
+},
+"health": {
+"href": "http://localhost:8080/actuator/health",
+"templated": false
+},
+"health-path": {
+"href": "http://localhost:8080/actuator/health/{*path}",
+"templated": true
+},
+"info": {
+"href": "http://localhost:8080/actuator/info",
+"templated": false
+},
+"metrics-requiredMetricName": {
+"href": "http://localhost:8080/actuator/metrics/{requiredMetricName}",
+"templated": true
+},
+"metrics": {
+"href": "http://localhost:8080/actuator/metrics",
+"templated": false
+}
+}
+}
+```
+
+Aqui está o Actuator expondo para nós health. 
+
+Aqui tenho health mais um path específico, mas ele é herdado desse health aqui que foi configurado no application properties.
+
+tenho o endpoint health-path que veio herdado do health, tenho o info, e tenho o metrics com uma métrica específica, o metric name, e tenho o metrics puro.
+
+Então, o que vou fazer aqui? 
+
+Vou abrir o health, vamos dar uma olhada no health. 
+
+```
+{
+"status": "UP",
+"components": {
+"db": {
+"status": "UP",
+"details": {
+"database": "MySQL",
+"validationQuery": "isValid()"
+}
+},
+"diskSpace": {
+"status": "UP",
+"details": {
+"total": 419429347328,
+"free": 277309042688,
+"threshold": 10485760,
+"exists": true
+}
+},
+"ping": {
+"status": "UP"
+},
+"redis": {
+"status": "UP",
+"details": {
+"version": "7.0.3"
+}
+}
+}
+}
+```
+
+Está aqui, esse é o health que pode ser usado como health check, então status: UP. 
+
+Ele olha, inclusive, a comunicação que a aplicação depende, no caso, o My SQL, está conectado.
+
+Olha o espaço em disco. Tem o redis também UP. Então, esse health é importantíssimo para a questão de health check e para você entender, em um momento imediato, se alguma dependência está com problema.
+
+Se ele não conectar com o Redis, vai bater aqui; se não conectar com o MySQL, vai bater aqui também, porque isso não depende da aplicação conectar no banco para ser exibido.
+
+Já demos uma olhada no health, vamos dar uma olhada no info, o que eu encontro dentro do info. 
+
+```
+{
+"app": {
+"name": "forum",
+"description": "Demo project for Spring Boot",
+"version": "0.0.1-SNAPSHOT",
+"encoding": "UTF-8",
+"java": {
+"version": "1.8.0_161"
+}
+}
+}
+```
+
+O app, qual é o nome, a descrição, a versão, como ele está codificado e a versão do Java.
+
+O que nós conseguimos, na parte mais importante, em metrics, o que conseguimos ver? 
+
+```
+{
+"names": [
+"hikaricp.connections",
+"hikaricp.connections.acquire",
+"hikaricp.connections.active",
+"hikaricp.connections.creation",
+"hikaricp.connections.idle",
+"hikaricp.connections.max",
+"hikaricp.connections.min",
+"hikaricp.connections.pending",
+"hikaricp.connections.timeout",
+"hikaricp.connections.usage",
+"http.server.requests",
+"jdbc.connections.active",
+"jdbc.connections.idle",
+"jdbc.connections.max",
+"jdbc.connections.min",
+"jvm.buffer.count",
+"jvm.buffer.memory.used",
+"jvm.buffer.total.capacity",
+"jvm.classes.loaded",
+"jvm.classes.unloaded",
+"jvm.gc.live.data.size",
+"jvm.gc.max.data.size",
+"jvm.gc.memory.allocated",
+"jvm.gc.memory.promoted",
+"jvm.gc.pause",
+"jvm.memory.committed",
+"jvm.memory.max",
+"jvm.memory.used",
+"jvm.threads.daemon",
+"jvm.threads.live",
+"jvm.threads.peak",
+"jvm.threads.states",
+"logback.events",
+"process.cpu.usage",
+"process.start.time",
+"process.uptime",
+"system.cpu.count",
+"system.cpu.usage",
+"tomcat.sessions.active.current",
+"tomcat.sessions.active.max",
+"tomcat.sessions.alive.max",
+"tomcat.sessions.created",
+"tomcat.sessions.expired",
+"tomcat.sessions.rejected"
+]
+}
+```
+
+**Aqui tenho a exposição de todas as métricas da JVM. **
+
+Se você verificar, você tem o uso de CPU, você tem o log no logback, você tem a questão de threads, de memória, você consegue encontrar o garbage collector.
+
+Você consegue pegar o pool de conexões da JDBC com o banco, conexões pendentes, com timeout, utilizadas, tempo de criação, enfim, diversas métricas.
+
+Essas métricas, se eu pegar o nome, eu consigo chegar nesse endpoint com o nome de uma métrica naquela métrica específica. 
+
+Por exemplo, vou pegar o hikaricp.connections, vou chamar esse endpoint, que é o mesmo. 
+
+Vou colocar o “http://localhost:8080/actuator/metrics/hikaricp.connections” e está aqui, o valor é 10.
+
+**Nós conseguimos colocar as métricas da JVM aqui, elas estão expostas, porém, não estão no formato esperado. **
+
+Nós não conseguimos identificar e usar essas métricas através do Prometheus, que é o nosso objetivo.
+
+Então, vamos configurar o Micrometer e ele vai fazer esse meio de campo, vai tornar essas métricas legíveis para o Prometheus.
+
+## Expondo métricas para o Prometheus
+
+fizemos a configuração do Actuator e conseguimos externalizar as métricas da JVM.
+
+Essas métricas ajudam bastante, mas não são o que nós realmente queremos, nós precisamos que as métricas estejam legíveis para o Prometheus. 
+
+**Para conseguirmos fazer isso, temos que trabalhar com o Micrometer.**
+
+Basicamente, ele vai ser a nossa fachada de métricas, levando as métricas em um formato legível para o Prometheus.
+
+Para fazer isso, é bem simples, basta você dar uma pesquisada em “Micrometer”. 
+
+[micrometer](https://micrometer.io/)
+
+Entrando no site, vou em “Documentação > Instalação”. 
+
+Na “Instalação”, eu tenho o formato para o Gradle – não é o que nos atende, eu vou utilizar o bloco para o Maven.
+
+```
+<dependency>
+  <groupId>io.micrometer</groupId>
+  <artifactId>micrometer-registry-prometheus</artifactId>
+</dependency>
+```
+
+Você vai copiar esse bloco e, de posse desse conteúdo copiado, vamos no pom.xml adicionar essa dependência. 
+
+Basta salvar e agora vem uma alteração no application.prod.properties.
+
+O que vai ser necessário? 
+
+Colocar o endpoint Prometheus, que nós não colocamos na última aula. 
+
+Logo após metrics, vai colocar uma vírgula e vai colocar aqui prometheus: management.endpoints.web.exposure.include=health,info,metrics,prometheus.
+
+```
+# actuator
+management.endpoint.health.show-details=always
+management.endpoints.web.exposure.include=health,info,metrics, prometheus
+```
+
+Vamos expor o endpoint prometheus e, além disso, precisamos de uma configuração adicional. 
+
+```
+# prometheus
+management.metrics.enable.jvm=true
+management.metrics.export.prometheus.enabled=true
+management.metrics.distribution.sla.http.server.requests=50ms,100ms,200ms,300ms,400ms,500ms,1s
+management.metrics.tags.application=app-forum-api
+```
+
+é muito importante que vocês entendam cada uma dessas linhas.
+
+
+Primeiro, vamos habilitar as métricas da JVM, tem aqui management.
+metrics.enable.jvm=true; 
+
+tem aqui também o management.metrics.export.prometheus.enabled=true. 
+
+Estamos habilitando o export das métricas para o Prometheus.
+
+Temos aqui uma métrica específica relacionada à SLA, já vamos deixar configurado para não termos que voltar nesse arquivo no futuro.
+
+Aqui também tenho uma configuração que é de tagueamento. 
+
+**Quando externalizarmos uma métrica, essa métrica vai ser exibida com um tagueamento. **
+
+Nesse caso, ela vai ter a tag **app-forum-api**.
+
+Por que isso? 
+
+Quando tivermos N aplicações rodando, algumas métricas vão ser iguais.
+
+Por exemplo, a métrica de tempo de resposta pode ter o mesmo nome, mas posso querer olhar mais de uma aplicação, aí a tag entra nesse ponto, porque eu posso selecionar aquela métrica com uma tag específica correspondente à aplicação que eu quero avaliar.
+
+Vamos para o Terminal e eu vou fazer o build dessa nova versão.
+
+Enquanto ele vai "buildando", podemos dar uma olhada no Actuator. 
+
+Notem que são esses endpoints que nós possuímos.
+
+Não tem nada relacionado ao Prometheus – temos métricas, mas não temos o Prometheus. 
+
+Vamos no start.sh e vamos rodar a aplicação.
+
+Uma coisa importante, que eu gostaria que vocês fizessem, é dar uma lida na documentação do Actuator. 
+
+Aqui, no Actuator, você pode ver a parte de “Logging”, que é exposta, e tem o log level, que é exposto.
+
+Tem a parte de métricas. 
+
+Já veio o Micrometer aqui e tem a parte específica do Prometheus. 
+
+```
+"prometheus": {
+"href": "http://localhost:8080/actuator/prometheus",
+"templated": false
+},
+```
+
+E também dar uma olhada na documentação do Micrometer.
+
+É bem importante que você entenda isso para que você possa levar para outras aplicações com o conhecimento de causa interessante. 
+
+vamos voltar para o browser. 
+
+No browser, vou atualizar o Actuator e agora já tem o endpoint actuator-prometheus. 
+
+http://localhost:8080/actuator/prometheus
+
+Clicando nele, nós encontramos as métricas no formato esperado pelo Prometheus.
+
+Se você notar, tem bastante coisa, é muita métrica, e a maior parte delas vai ser útil para nós na nossa implantação, no acompanhamento do funcionamento da nossa API. 
+
+Alguma aqui não é útil? 
+
+Na verdade, nenhuma é inútil, todas elas são úteis.
+
+Algumas vamos acabar desprezando quando estamos rodando a nossa aplicação em um contêiner, então não são tão necessárias para nós quanto o número de núcleos de uma CPU ou coisas do tipo.
+
+Mas está aqui, conseguimos expor essas métricas em um formato legível para o Prometheus e agora podemos entender o que são essas métricas e ao que cada uma delas corresponde.
+
+Pelo menos, as que são interessantes para a nossa aplicação e que vamos utilizar futuramente configurando dashboards e alertas em cima de valores específicos, de momentos específicos dessas métricas.
+
+## Métricas da JVM
+
+Essas métricas estão sendo externalizadas através do Micrometer e o endpoint em que vamos consumir essas métricas ficam em 
+
+http://localhost:8080/actuator/prometheus
+
+Isso é só por enquanto. 
+
+Lá na frente, vamos acessar isso através de outro endpoint porque vamos passar por um proxy. 
+
+O Prometheus não vai passar pelo proxy, ele vai de forma interna, mas quando formos visualizar, a visualização será outra.
+
+No momento, vamos manter assim. 
+
+Vamos dar uma olhada para entender quais informações nós conseguimos coletar. 
+
+### Memória
+Temos aqui a parte de utilização de memória com essa métrica **jvm_memory_used_bytes**. 
+
+É muito legal porque você consegue verificar como está a alocação de memória heap – o que está em área heap e o que está em área nonheap.
+
+Além disso, não vou falar de todas as métricas, vou falar só das mais importantes para nós e de outras que podem ser interessantes para você, mas não de todas.
+
+### Logs
+Aqui, temos uma métrica **logback_events_total**. 
+
+Essa métrica, basicamente, está relacionada àquele tipo de evento registrado no log. 
+
+Você consegue verificar info, trace, warn, error e debug. 
+
+é uma métrica importante.
+
+### Hikaricp -- Conexoes e Banco de dados
+Além disso, temos aqui o hikaricp que é o monitoramento das conexões da aplicação com a base de dados.
+
+temos a **hikaricp_connections_min**, o número mínimo, essa métrica está relacionada ao número mínimo de conexões, que é o pool de conexões que é aberto quando a aplicação sobe.
+
+**hikaricp_connections_usage_seconds_max**
+Aqui são os segundos utilizados para fazer a conexão. 
+
+### Process
+Andando um pouco mais sobre essas métricas, está aqui **process_files_open_files**, 66; 
+
+### JVM
+**jvm_gc_pause_seconds_...**
+uma métrica bem legal para você entender como o garbage collector está fazendo o trabalho dele, o tempo de uma execução entre outra do garbage collector.
+
+### CPU
+Além disso, temos aqui **process_cpu_usage**, temos a utilização de CPU por conta do processo que está em execução pela aplicação. 
+
+### JVM Memory
+**jvm_memory_commitetted_bytes**
+temos mais uma métrica relacionada à memória. 
+
+Aqui, no caso, é a alocação nas áreas de memória pela JVM.
+
+### hikarycp -- tempo para aquisicao de conexao
+**hikaricp_connections_acquire_seconds**
+
+temos o tempo que demorou para que a conexão fosse iniciada com a base de dados; 
+
+### JVM Threads
+**jvm_threads_states_threads**
+
+temos também métricas relacionadas ao estado das threads – isso é bem legal, você consegue ver quais estão em execução, quais estão em espera, quais foram terminadas, quais estão em time-waiting, blocked e new.
+
+### SLA
+Lembra da métrica de SLA que nós colocamos – que, na verdade, nós configuramos via application properties? 
+
+Na verdade, o que nós configuramos foi a exibição da métrica.
+
+Você vai notar que é o **http_server_requests_seconds_bucket**. 
+
+Existe um bucket que vai alocar esses valores para uma determinada contagem. 
+
+Temos aqui de 50 milissegundos, 100, 200, 300, 500, 1 segundo e ao infinito e além. 
+
+**Passou de 500 milissegundos, temos um problema; de 1 segundo em diante a coisa está bem crítica em termos de resposta para a nossa API.**
+
+Está aqui uma métrica que é importantíssima para entendermos como está o desempenho da nossa aplicação e a experiência do usuário final ao consumi-la, porque você não vai querer que a sua API demore mais de um segundo para responder.
+
+De 300 milissegundos para cima, já um caso a se preocupar. 
+
+Se, porventura, algo ficar indisponível e tivermos um 500 aqui, vai "plotar" essa métrica, ela vai ser exibida relacionada ao status de erro 500.
+
+### JVM classes
+jvm_classes_loaded_classes
+
+### timeout de conexao com o database
+**hikarycp_connections_timeout_total**
+
+aqui o timeout de conexão com o database, uma métrica bem importante para entendermos, no momento de um incidente, se a nossa aplicação não está se comunicando com a base de dados e se isso foi o causador do nosso problema.
+
+### tempo de criaçao de uma conexao com o database
+**hikaricp_connections_creation_seconds**
+O tempo de criação de uma conexão, esse é o tempo máximo, no caso. 
+
+
+### utilizaçao de CPU
+**system_cpu_usage**
+Utilização de CPU, está aqui a utilização de CPU. 
+
+tem a de CPU, tem a de processo. 
+
+Essa daqui, **system_cpu_count**, não vai ser tão interessante quando nós estivermos rodando a nossa aplicação em um modelo distribuído porque, basicamente, ela traz a contagem de núcleos de CPU, mas está valendo, é uma métrica também.
+
+Eu não vou me alongar muito nesse assunto, a documentação dessas métricas está naqueles links que eu passei nas aulas anteriores que contemplam o Actuator e o Prometheus.
+
+Mas é interessante que saibamos a riqueza das informações que são exibidas aqui para que possamos realmente observar o que é importante para o nosso caso.
+
+Pode ser que você tenha um caso diferente desse que nós vamos enfrentar nessa aplicação, então pode ser interessante para você olhar para outras métricas no futuro e você já sabe onde encontrá-las e como aprofundar no que realmente são essas métricas através da documentação.
+
+Então, vamos entender como é o processo de instrumentação e de utilização de uma métrica personalizada.
+
+## Métricas personalizadas
+O problema é o seguinte: temos basicamente todas as métricas da JVM sendo expostas, porém, nós não temos nenhuma métrica que corresponda a alguma regra de negócio da nossa aplicação, e temos alguns processos que precisam ser mapeados.
+
+Hoje, não temos o controle sobre o número de usuários autenticados e as tentativas de autenticação com erro. 
+
+Vamos trabalhar em cima disso e gerar uma métrica para autenticação com sucesso e outra para erros de autenticação.
+
+Vamos abrir a IDE, vamos para o Eclipse. 
+
+No Eclipse, vamos na nossa aplicação, expandir o main/java e vamos abrir o pacote forum.controller.
+
+Vamos trabalhar no controller. 
+
+Dentro do controller, temos uma classe que é a AutenticacaoController.java que faz o controle de autenticação. 
+
+```
+@RestController
+@RequestMapping("/auth")
+@Profile(value = {"prod", "test"})
+public class AutenticacaoController {
+	
+	@Autowired
+	private AuthenticationManager authManager;
+	
+	@Autowired
+	private TokenService tokenService;
+	
+	@PostMapping
+	public ResponseEntity<TokenDto> autenticar(@RequestBody @Valid LoginForm form) {
+		UsernamePasswordAuthenticationToken dadosLogin = form.converter();
+		
+		try {
+			Authentication authentication = authManager.authenticate(dadosLogin);
+			String token = tokenService.gerarToken(authentication); 		
+			return ResponseEntity.ok(new TokenDto(token, "Bearer"));
+			
+		} catch (AuthenticationException e) {
+			return ResponseEntity.badRequest().build();
+		}
+
+		
+	}
+}
+
+```
+
+Basicamente, o que essa classe faz – vou explicar de forma bem resumida – é, se você passa um usuário e uma senha correta, ela vai te retornar um token; caso contrário, ela te retorna um erro já tratado.
+
+Esse é o básico dessa classe para não termos que mergulhar em cima da lógica feita nessa aplicação. 
+
+Então, o que precisamos aqui? 
+
+Primeiro, precisamos de umas dependências, mas essas dependências vão ser cumpridas conforme formos criando o método que vamos utilizar.
+
+Eu vou começar definindo dois atributos. 
+
+Eles vão se chamar **authUserSuccess** e **authUserErrors**. 
+
+Ao inserir esses dois atributos, você vai ver que o Eclipse mostra um problema.
+
+O que é esse problema? Temos que importar uma biblioteca, temos que importar uma dependência para que isso funcione. Presta bem atenção aqui porque eu vou trabalhar com o Counter vindo do **io.micrometer.core.instrument**.
+
+Importando isso não temos mais aquela sinalização de erro. 
+
+Agora, vou criar o método aqui. 
+
+
+```
+public AutenticacaoController(MeterRegistry registry) {
+		authUserSuccess = Counter.builder("auth_user_success")
+				.description("usuarios autenticados")
+				.register(registry);
+		
+		authUserError = Counter.builder("auth_user_error")
+				.description("erros de login")
+				.register(registry);
+	}
+```
+
+note que também está pedindo mais uma dependência. Eu sempre vou trabalhar com o io.micrometer.core.instrument.
+
+agora vamos entender isso. 
+
+Eu tenho um método, os parâmetros que ele necessita é o MeterRegistry e o registry. 
+
+Aqui, eu tenho uma propriedade que é o authUserSuccess, que eu já instanciei aqui em cima, o atributo.
+
+Basicamente, o que ela faz? 
+
+Ela cria uma métrica chamada **auth_user_success** com uma descrição ”usuarios autenticados” e anexa isso no registry, então ela registra essa métrica para mim.
+
+Aqui, eu tenho também o meu atributo **authUserErrors** e ele faz exatamente a mesma coisa, Counter.Builder, cria o auth_user_error, cria a descrição ”erros de login” e faz o registro dessa métrica.
+
+Tendo feito isso, já estamos trabalhando com uma métrica que é do tipo Counter. 
+
+**Uma métrica do tipo Counter significa que é uma métrica incremental, ela vai crescer gradativamente, conforme um evento específico for disparado.**
+
+Que evento é esse que vai trabalhar com o crescimento dessa métrica, que vai alimentar a configuração dela? 
+
+Se olharmos aqui, temos o ResponseEntity que retorna um TokenDto.
+
+Esse token é o token de autenticação. 
+
+Estamos falando de uma API Rest, ela não guarda o estado e o processo de autenticação corresponde à requisição de um front-end ou de um app que vai trazer um usuário e uma senha que vão chegar nessa API.
+
+Ela vai encaminhar essa requisição para a lógica de validação que ela possui, consultar o banco, e, se estiver tudo certo, ela retorna um token para esse usuário continuar executando suas ações autenticado através da API. Então, essa é a lógica.
+
+Aqui, temos um bloco try/catch. Dentro desse bloco, eu tenho, logicamente no try, a minha primeira opção é a de sucesso. Vou basicamente trabalhar com o incremento desse valor.
+
+No meu bloco try, vou incrementar essa chamada authUserSuccess.increment(). 
+
+```
+try {
+			Authentication authentication = authManager.authenticate(dadosLogin);
+			String token = tokenService.gerarToken(authentication); 
+			authUserSuccess.increment();
+			return ResponseEntity.ok(new TokenDto(token, "Bearer"));
+			
+		} 
+```
+
+Bem simples, a mesma coisa vou fazer com Errors authUserErrors.increment().
+
+```
+catch (AuthenticationException e) {
+			authUserErrors.increment();
+			return ResponseEntity.badRequest().build();
+		}
+```
+
+Tendo feito essa configuração, salva o código e já podemos fazer o build desse novo artefato. 
+
+vamos subir a aplicação. 
+
+Vamos voltar para o browser, vamos atualizar e vamos procurar por user agora. 
+
+Aqui, auth_user_success_total usuarios autenticados, é uma métrica do tipo counter, e está aqui, não tem nenhum usuário autenticado. 
+
+Vamos para o error.
+
+Está aqui, auth_user_error_total erros de login, também do tipo counter, e está aqui a métrica auth_user_error 0.0. Nenhum erro e nenhum usuário autenticado.
+
+Com o Postman aberto, você vai fazer uma requisição. 
+
+Essa requisição é “Post”, você define como “Post”, vamos fazer para “localhost:8080/auth”. 
+
+Em “Authorization”, entra um “Bearer Token”, então o “Type” é “Bearer Token”. 
+
+Em “Header”, é importante você colocar o “Content Type”, que é “application/json”, senão não vai funcionar. E no “Body” você vai colocar esse JSON aqui:
+
+```
+{
+    "email": "moderador@email.com",
+    "senha": "123456"
+}
+```
+
+Isso é o que você precisa configurar no Postman para fazer essa requisição. 
+
+O retorno da API para mim é esse, ele me retorna o token do tipo "Bearer". 
+
+Então, eu tenho agora um usuário autenticado. 
+
+Então, vou atualizar e está aqui, agora já temos um 1 usuário autenticado.
+
+Não está fazendo distinção se é o usuário X ou Y, é só o número de autenticações válidas. 
+
+Tendo feito isso, vou colocar um caractere a mais para essa autenticação resultar em um erro:
+
+```
+{
+    "email": "moderador@email.com",
+    "senha": "1234567"
+}
+```
+
+Vamos voltar nas nossas métricas, vamos olhar essa outra métrica de usuário. Aqui é o total de usuários autenticados e aqui estão os erros. 
+
+Vou atualizar, agora estou com 16 erros e vamos procurar o sucesso. 
+
+O sucesso continua com 13.
+
+Nós criamos uma métrica personalizada, agora podemos mensurar quantos usuários autenticaram em um período, é isso que vamos fazer quando realmente trabalharmos com essa métrica, porque vamos olhar uma série temporal.
+
+Vamos entender quantos usuários autenticaram no último minuto e quantos erros de autenticação ocorreram também no último minuto ou nos últimos N minutos.
+
+Eu recomendo que você leia com atenção, que você estude essa documentação para você implementar outras métricas nessa aplicação e, futuramente, levar isso para uma aplicação sua.
+
+## Preparando a API para a conteinerização
+
+Vamos preparar essa aplicação para ela ser empacotada e rodar junto com a stack do Docker Compose.
+
+O que vamos fazer é o seguinte, vou fechar o “src/main/java” e vou no “src/main/resources”. 
+
+No application.prod.properties, vou modificar o redis.host. 
+
+Aqui está para localhost, mas esse contêiner se chama redis-forum-api.
+
+disto:
+
+```
+spring.redis.host=localhost
+```
+
+para isto:
+
+```
+spring.redis.host=redis-forum-api
+```
+
+Em spring.datasource, vou trocar o localhost pelo mysql-forum-api.
+
+disto:
+```
+spring.datasource.url=jdbc:mysql://localhost:3306/forum
+```
+para isto:
+```
+spring.datasource.url=jdbc:mysql://mysql-forum-api:3306/forum
+```
+
+temos que fazer essa mudança porque essa API vai conectar tanto no MySQL quanto no Redis por uma rede interna do Docker. 
+
+Então, o nosso Docker Compose vai mudar.
+
+No proximo topico, você já vai ter um Docker Compose diferente e esse Docker Compose já vai subir uma stack maior, ele vai subir o Redis e o MySQL internamente, o próprio Docker Compose vai fazer o build do contêiner da aplicação e, além disso, ele vai subir também o Prometheus.
+
+Agora, com relação à aplicação, a conteinerização dela é bem simples.
+
+o que precisamos mudar aqui, como pré-requisito, são apenas esses dois valores. 
+
+Podemos fechar a aplicação, não vamos "startar" ela por aqui, vou ver o que está executando da stack.
+
+vou "rebuildar" a aplicaçao. 
+
+Vamos criar um artefato JAR que agora já possui essas configurações, ele já está configurado para conectar no contêiner, não mais no localhost.
+
+A partir de agora, já vamos trabalhar de uma forma diferente, vamos focar nas ferramentas-chaves do curso – nesse caso, o Prometheus, o Grafana e, posteriormente, o Alert Manager.
+
+## Subindo a stack com API e Prometheus
+O que vamos fazer? 
+
+Vamos dar uma olhada no arquivo docker-compose. 
+```
+version: '3'
+
+networks:
+  database:
+    internal: true
+  cache:
+    internal: true
+  api:
+    internal: true
+  monit:
+  proxy:
+
+services:
+  redis-forum-api:
+    image: redis
+    container_name: redis-forum-api
+    restart: unless-stopped
+    expose:
+      - 6379
+    networks:
+      - cache
+
+  mysql-forum-api:
+    image: mysql:5.7
+    container_name: mysql-forum-api
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: 'forum'
+      MYSQL_USER: 'forum'
+      MYSQL_PASSWORD: 'Bk55yc1u0eiqga6e'
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+      MYSQL_ROOT_HOST: '%'
+    volumes:
+      - ./mysql:/docker-entrypoint-initdb.d
+    expose:
+      - 3306
+    networks:
+      - database
+    depends_on:
+      - redis-forum-api
+
+  app-forum-api:
+    build:
+      context: ./app/
+      dockerfile: Dockerfile
+    image: app-forum-api
+    container_name: app-forum-api
+    restart: unless-stopped
+    networks:
+      - api
+      - database
+      - cache
+    depends_on:
+      - mysql-forum-api
+    healthcheck:
+      test: "curl -sS http://app-forum-api:8080/actuator/health"
+      interval: 1s
+      timeout: 30s
+      retries: 60
+  
+  proxy-forum-api:
+    image: nginx
+    container_name: proxy-forum-api
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/proxy.conf:/etc/nginx/conf.d/proxy.conf
+    ports:
+      - 80:80
+    networks:
+      - proxy
+      - api
+    depends_on:
+      - app-forum-api
+
+  prometheus-forum-api:
+    image: prom/prometheus:latest
+    container_name: prometheus-forum-api
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+    networks:
+      - monit
+      - api
+    depends_on:
+      - proxy-forum-api
+```
+
+Vou abrir o docker_compose.ymal (vim docker-compose.yaml), e vamos falar um pouco desse arquivo antes de subir a stack. 
+
+vamos às alteraçoes.
+
+redes internas do Docker.
+```
+networks:
+  database:
+    internal: true
+  cache:
+    internal: true
+  api:
+    internal: true
+  monit:
+  proxy:
+```
+
+Agora eu tenho uma rede chamada database, que é interna; tenho uma rede chamada cache, que também é interna; uma rede chamada api, que é interna; e tenho uma rede chamada monit, que, no momento, está externa, porque vamos utilizar a interface web do Prometheus para entender como funciona a linguagem PromQL e compor as nossas primeiras métricas.
+
+Futuramente, ela vai também ser uma rede interna porque Prometheus server não precisa estar exposto. 
+
+E a rede proxy, que é a rede que vai conduzir as requisições à aplicação, requisições externas.
+
+Os clientes vão consumir essa aplicação, mas, antes de chegar na aplicação, eles serão filtrados por um proxy, e é esse proxy que estará exposto, é um nginx.
+
+**O Prometheus vai consumir a aplicação por dentro, então, ele não vai passar pelo proxy, mas os clientes vão passar.**
+
+O que mudou nos serviços? 
+
+```
+redis-forum-api:
+    image: redis
+    container_name: redis-forum-api
+    restart: unless-stopped
+    expose:
+      - 6379
+    networks:
+      - cache
+```
+
+O serviço do Redis está aqui, não mudou basicamente nada, exceto a rede. 
+
+A network dele agora é a cache. 
+
+Ele continua somente com o expose: 6379.
+
+Antes, ele estava fazendo bind de portas, estava com o ports, agora é o expose, ele só expõe a porta do contêiner, a 6379, e isso somente de forma interna, só dentro do Docker.
+
+
+```
+mysql-forum-api:
+    image: mysql:5.7
+    container_name: mysql-forum-api
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: 'forum'
+      MYSQL_USER: 'forum'
+      MYSQL_PASSWORD: 'Bk55yc1u0eiqga6e'
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+      MYSQL_ROOT_HOST: '%'
+    volumes:
+      - ./mysql:/docker-entrypoint-initdb.d
+    expose:
+      - 3306
+    networks:
+      - database
+    depends_on:
+      - redis-forum-api
+```
+
+Aqui, temos o mysql-forum-api que também teve mudanças, agora ele não tem mais ports, só tem o expose, então a porta 3306 do MySQL só é visível dentro do Docker e para quem tem acesso à rede database.
+
+Está na rede database e continua com a mesma dependência, que o redis, o redis tem que subir primeiro. 
+
+```
+app-forum-api:
+    build:
+      context: ./app/
+      dockerfile: Dockerfile
+    image: app-forum-api
+    container_name: app-forum-api
+    restart: unless-stopped
+    networks:
+      - api
+      - database
+      - cache
+    depends_on:
+      - mysql-forum-api
+    healthcheck:
+      test: "curl -sS http://app-forum-api:8080/actuator/health"
+      interval: 1s
+      timeout: 30s
+      retries: 60
+```
+
+**Agora eu tenho a aplicação que vai ser "buildada", é a nossa app-forum-api.**
+
+Ele vai fazer um build, cujo contexto é o diretório app. 
+
+Ele vai encontrar um dockerfile dentro do diretório app e vai fazer o build, gerando a imagem app-forum-api.
+
+O nome do contêiner vai ser app-forum-api. 
+
+A aplicação está em comunicação direta com três redes: a rede api, a rede database e a rede cache. 
+
+Ela precisa falar com o MySQL e precisa falar com o redis.
+
+Quais são as dependências desse contêiner? 
+
+O MySQL, ele precisa do MySQL para poder consultar a base de dados; e o MySQL, por sua vez, depende do Redis.
+
+Então, tem uma cadeia de dependências que precisa ser cumprida, e ele tem o healthcheck. 
+
+Nós passamos um curl, que vai internamente, com o contêiner app-forum-api:8080/, lá no actuator/health.
+
+Se ele retornar 200, está certo. 
+
+e as configs do timeout e as tentativas. 
+
+```
+proxy-forum-api:
+    image: nginx
+    container_name: proxy-forum-api
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/proxy.conf:/etc/nginx/conf.d/proxy.conf
+    ports:
+      - 80:80
+    networks:
+      - proxy
+      - api
+    depends_on:
+      - app-forum-api
+```
+
+Aqui está o contêiner do proxy, que é um nginx, ele tem diversas rotas que eu vou mostrar para vocês de forma rápida.
+
+Basicamente, esse vai fazer o bind de porta na porta 80 da sua máquina. 
+
+A partir desse momento, as requisições vão ser para localhost, quando quisermos acessar a aplicação de forma externa. 
+
+Ele pertence à rede proxy e api e depende do app-forum-api para subir.
+
+
+```
+prometheus-forum-api:
+    image: prom/prometheus:latest
+    container_name: prometheus-forum-api
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+    networks:
+      - monit
+      - api
+    depends_on:
+      - proxy-forum-api
+```
+Por último, temos o contêiner do Prometheus. 
+
+O nome será prometheus-forum-api; a imagem é o prom/prometheus:latest, então é a última versão, a mais atual; o nome do contêiner é prometheus-forum-api; e aqui os volumes do Prometheus.
+
+Você vai notar que, existem algumas mudanças, ele tem uma pasta chamada prometheus com um subdiretório prometheus_data com o arquivo Prometheus.yml.
+
+Assim como ele tem um diretório nginx que também tem um arquivo chamado nginx.conf e proxy.conf. 
+
+Aqui, estão as configurações do Prometheus para sua subida. 
+
+```
+command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+```
+
+
+Tenho um arquivo de configuração que, se você notar, vai ser retirado do diretório prometheus/prometheus.yml e vai ser colocado no local em que estamos alimentando o config.file como parâmetro.
+
+Esse arquivo tem as configurações do Prometheus. 
+
+Aqui, temos o path do TSDB, do storage dele, que também é um volume que vai sair da nossa máquina.
+
+Temos aqui as bibliotecas que o Prometheus vai utilizar; a porta que ele vai fazer bind, a 9090; e a rede que o Prometheus faz parte que, nesse caso, é a monit e a rede api. 
+
+Está feita a configuração, vou salvar. 
+
+Agora podemos dar um docker-compose up -d, vou subir em modo daemon para não ocupar a tela.
+
+já criou a stack, aparentemente subiu, vamos validar isso para garantir que está tudo certo. 
+
+Agora, qual é a mudança? 
+
+Vou em “http://localhost/topicos”, vamos ver se ele trouxe os tópicos para mim.
+
+O proxy está funcionando, está aqui, “/topicos”. 
+
+Eu posso agora ir em “http://localhost/topicos/2”, trouxe para mim, a aplicação está funcionando. 
+
+Qual é a mudança aqui? Quando quisermos acessar o endpoint de métricas, vamos acessar o “http://localhost/metrics”.
+
+Aqui, nós caímos nas métricas do Prometheus. 
+
+Se quisermos acessar outros endpoints que são expostos pela aplicação através do Actuator, podemos também acessar o “http://localhost/health”, que vai estar aqui e o “http://localhost/info”, que também está disponível para nós.
+
+Onde que está essa configuração? 
+
+Se dermos um ls, você vai ver que eu tenho o nginx, e aqui eu tenho o nginx.conf, que tem a configuração de redirecionamento.
+
+```
+user nginx;
+worker_processes 1;
+
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/conf.d/proxy.conf;
+    include /etc/nginx/mime.types;
+    include /etc/nginx/fastcgi_params;
+    include /etc/nginx/scgi_params;
+    include /etc/nginx/uwsgi_params;
+    
+    index index.html index.htm;
+    
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+  
+    access_log off;
+    server_tokens off;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+
+    server {
+
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        
+        server_name _;
+        root /usr/share/nginx/html;
+
+        location /topicos {
+            proxy_pass http://app-forum-api:8080/topicos;
+        }
+
+        location ~ /topicos/([0-9]+)$ {
+            proxy_pass http://app-forum-api:8080/topicos/$1;
+        }
+        
+        location /auth {
+            proxy_pass http://app-forum-api:8080/auth;
+        }
+
+        location /info {
+            proxy_pass http://app-forum-api:8080/actuator/info;
+        }
+        
+        location /metrics {
+            proxy_pass http://app-forum-api:8080/actuator/prometheus;
+        }
+        
+        location /health {
+            proxy_pass http://app-forum-api:8080/actuator/health;
+        }
+
+        location /images {
+        access_log off;
+        return 204;
+        }
+    }
+}
+
+
+```
+
+Não precisa se preocupar com isso, é só para você saber onde está. 
+
+Existe essa configuração de proxy_pass que faz o redirecionamento das requisições.
+
+A configuração de proxy não tem nada de interessante para você, pelo menos nesse momento, isso não deve fazer muito sentido, mas é legal você entender como funciona essa configuração.
+
+**Você vai notar que o proxy só serve para acessar a aplicação e os endpoints da aplicação de forma externa.**
+
+Ele não acessa o Prometheus. 
+
+O Prometheus em si está agora em “http://localhost:9090”.
+
+## Conhecendo as configurações do Prometheus
+Agora, vamos entender um pouco melhor essa interface web do Prometheus e entender a configuração que está por trás disso.
+
+Para você acessar o Prometheus, é “http://localhost:9090”. 
+
+Acessando o Prometheus, você vai cair diretamente aqui, nessa tela, e vai ver que tem aqui o histórico, que pode ser habilitado para consultas; a utilização do tempo local, você pode habilitá-lo ou manter o padrão.
+
+
+
+Você vê que existem, nesse painel, algumas opções. 
+
+Aqui, você encontra basicamente o tempo em que você vai executar uma consulta, então você pode definir o tempo em que você quer rodar aquela consulta.
+
+Existe o modo tabulado de exibição e o modo gráfico, em que nós vamos acabar vendo um gráfico mesmo. 
+
+Vamos entender essas opções de cima. Também tem a opção de adicionar painéis.
+
+Futuramente, não vamos trabalhar com essa interface, porque ela é muito simples para o propósito que nós temos, mas ela é extremamente funcional para você validar uma consulta, para você construir uma métrica, fazer um indicador.
+
+Além de ter alguns outros recursos que vamos utilizar na hora de verificar se temos uma regra de alerta funcional, na hora de verificar se o service discovery está olhando para todas as aplicações que nós configuramos etc.
+
+[3]
+
+Clicando em “Alerts”, não temos nenhum alerta configurado ainda, isso vamos fazer mais para frente, em outro capítulo, quando trabalharmos o Alertmanager.
+
+Em “Graph”, nós voltamos para o mesmo lugar em que estávamos anteriormente; em “Status”, temos algumas informações legais, como runtime e informação de build – não vou aprofundar muito nisso, é só mesmo para você entender o que é cada uma dessas opções.
+
+Em TSDB status está o status do TSBD, que é o Time Series Database. Você pode dar uma olhada com mais calma e entender essa configuração, vou deixar um link da documentação. No momento, isso não vai fazer diferença para nós.
+
+Em Command-line flags estão as flags de linha de comando que você pode usar para subir o Prometheus na hora da execução dele. Nós usamos algumas naquele Docker Compose.
+
+tem diversas flags que podem ser utilizadas na hora de subir o serviço.
+
+4
+
+tem a “Configuração”. Nessa configuração, vamos olhar o arquivo que gerou essa configuração. Essa configuração está sendo derivada de um arquivo, já vamos olhar para ele, mas é legal você entender que essa configuração você vai poder validar aqui.
+
+Você vem em “Status > Configuration” e você vai ver essa configuração. 
+
+Em “Regras”, não tem nenhuma regra habilitada, não temos o que exibir.
+
+5 
+
+Quando você vem em “Targets”, você pode ver quais são os targets que o Prometheus está olhando, quais são os alvos de coleta. 
+
+Temos aqui o contêiner “app-forum-api-8080/actuator/prometheus”, esse é o endpoint que o Micrometer disponibilizou para nós com as métricas traduzidas em um formato legível para o Prometheus.
+
+Aqui, temos um endpoint que é o próprio Prometheus, ele olha para ele mesmo. 
+
+O Prometheus monitora ele mesmo e "plota" essas métricas. 
+
+Se colocarmos aqui “localhost:9090” – o Prometheus roda na porta “9090” TCP – e colocarmos um “localhost:9090/metrics”, vamos pegar as métricas do próprio Prometheus.
+
+Como é uma aplicação feita em Go, você vai ver muitas métricas relacionadas à execução do Go. 
+
+Tem bastante métricas, eu não vou entrar no mérito das métricas do Prometheus, mas é interessante você entender que você pode, em algum momento, ter uma curiosidade do funcionamento do Prometheus, de algum aspecto que parece que não está interessante e olhar as métricas dele.
+
+Se você for em “Unhealthy”, não tem nenhum. 
+
+Basicamente, está tudo certo. 
+
+6
+
+Aqui, o “Service Discovery”. Para onde estamos olhando no momento, é o “app-forum-api” e para o próprio “prometheus-forum-api”.
+
+Aqui, temos o “Help”, que nos leva direto para a documentação do Prometheus. 
+
+Agora que já falamos um pouco da interface gráfica do Prometheus – só ressaltar que é aqui que vamos fazer as consultas das nossas métricas. 
+
+vamos focar nessa visualização e, principalmente, em “Graph”.
+
+Estávamos falando do ngnix, na aula de apresentação, está aqui o proxy_pass configurado. 
+
+Agora, vamos subir o nível e vamos entrar no prometheus, cd ../prometheus/
+
+**Aqui no prometheus, tem uma coisa que eu jamais faria em produção, mas, nesse ambiente "conteinerizado", foi feito. **
+
+O diretório prometheus_data está com permissão 777. 
+
+O diretório somente dentro dele não está com 777, mas, se eu olhar só para o diretório, você vai ver que ele está como 777.
+
+Por quê? Porque ele está no path do meu usuário no Linux, e não é o mesmo usuário de execução do Prometheus, que logicamente não é o root. Então, ele não tinha permissão para acessar esse compartilhamento.
+
+Para esse diretório específico, eu liberei um chmod 777 prometheus_data, foi o que eu fiz para que o contêiner funcionasse direito, por isso a coloração estranha no diretório.
+
+**Isso é uma peculiaridade do Linux.** No Windows, provavelmente você vai ter que olhar esse diretório e ir nas propriedades da pasta, “Segurança > Segurança Avançada” e mudar as permissões para outros, permitindo que qualquer usuário que tenha acesso a essa pasta possa acessá-la e escrever nela.
+
+Dificilmente você vai precisar fazer alguma mudança porque estamos falando de uma "conteinerização" em Linux. Enfim, seguindo, além desse diretório, temos o mais importante da aula que é o prometheus.yml.
+
+```
+
+```
+
+Esse arquivo de configuração gerou aquela configuração que nós vimos lá na interface web. 
+
+Aqui, o que é importante? 
+
+### scrape interval
+scrape_interval, que é uma característica global nessa configuração e em qualquer outra.
+
+O que muda aqui? 
+
+Eu defini como 5s. 
+
+A regra é que, para qualquer configuração de scrape – **scrape é o tempo que o Prometheus demora para fazer uma consulta em um endpoint de métrica**, então, scrape_interval, scrape_time, enfim, é o tempo do Prometheus entre uma consulta e outra em um endpoint de métricas.
+
+Eu coloquei 5s, isso está global. 
+
+Eu posso mudar isso? 
+
+Posso, é só fazer uma configuração diferente em algum job. 
+
+### Prometheus job
+Como é a divisão disso? 
+
+Eu tenho aqui scrape_interval, que é uma característica global nessa configuração, e tenho scrape_configs, que são as configurações de scrape personalizadas.
+
+Se eu quiser sobrescrever isso e mudar o valor em alguma scrape_config, eu tenho que trabalhar dentro do escopo de um job. 
+
+```
+
+```
+
+
+Tenho aqui job_name: prometheus-forum-api, que é aquela consulta que o Prometheus faz nele mesmo.
+
+Aqui, o meu scrape_interval é de 15s; o timeout de 10s. 
+
+Então, ele está sobrescrevendo a configuração global aqui. 
+
+Qual é o metrics_path que ele olha, qual o path de métricas? É o /metrics.
+
+Qual é o esquema? 
+
+http, o protocolo HTTP. 
+
+As configurações estáticas são o target dele, que é o prometheus-forum-api:9090. 
+
+**Importante, tem que ter o IP, o FQDN da máquina ou o hostname, a porta TCP, onde o Prometheus está rodando**.
+
+Aqui, em metrics_path, o path, o endpoint em que a métrica está. 
+
+É legal que uma informação complementa a outra. 
+
+Aqui, tenho outro job_name que, nesse caso, é o app-forum-api.
+
+```
+
+```
+
+O metrics_path dele é em /actuator/prometheus e a static_configs tem um target que é o app-forum-api:8080. 
+
+Se formos avaliar, você vai ver que esse job app-forum-api está com o scrape_interval de 5s, está herdando a característica da configuração global.
+
+Não estou sobrescrevendo, acho que 5 segundos é o ideal nesse caso para olharmos para uma API, mas você pode customizar isso. 
+
+Isso é a nossa introdução à configuração do Prometheus. 
+
+Vamos ver tópicos mais avançados até o fim do curso, mas, no momento, isso é necessário para que você possa entender o funcionamento dele.
+
+Por último, vamos só dar uma olhada no Docker Compose para você entender que, no momento de subida do contêiner, nós estamos utilizando esses arquivos.
+
+```
+
+```
+
+O local exato da configuração do prometheus.yml, do arquivo, é em /etc/prometheus/prometheus.yml, e aqui é onde está o TSDB, é um diretório que está saindo da nossa máquina, é aquele diretório que eu tive que dar uma permissão muito aberta para que o usuário do Prometheus pudesse manipulá-lo dentro do contêiner.
+
+Aqui estão as flags. 
+
+Lembra das flags que vimos na interface web? 
+
+Então, aqui tem algumas flags que estão sendo utilizadas que podem ser encontradas na interface web dele.
+
+Então, é isso, foi só uma navegação pelo Prometheus, entendendo algumas configurações dele. Vamos aprofundando, vamos trabalhando mais nisso e olhando para o que interessa no decorrer do curso.
+
