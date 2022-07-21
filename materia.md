@@ -69,6 +69,30 @@ terminado em
       - [funçao increase()](#funçao-increase)
       - [funçao sum()](#funçao-sum)
       - [funçao irate()](#funçao-irate)
+- [Monitoramento: Prometheus, Grafana e Alertmanager](#monitoramento-prometheus-grafana-e-alertmanager)
+  - [Subindo o Grafana](#subindo-o-grafana)
+    - [configurar um datasource](#configurar-um-datasource)
+    - [folders](#folders)
+    - [dashboards](#dashboards)
+  - [Variáveis e métricas Uptime e Start Time](#variáveis-e-métricas-uptime-e-start-time)
+    - [variaveis](#variaveis)
+    - [dashboard UPTIME](#dashboard-uptime)
+    - [dashboard START TIME](#dashboard-start-time)
+  - [Métricas Logback e JDBC Pool](#métricas-logback-e-jdbc-pool)
+    - [dashboard Logback (LOGS)](#dashboard-logback-logs)
+    - [dashboard JDBC pool (connections)](#dashboard-jdbc-pool-connections)
+  - [Métricas Logged Users e Auth Errors](#métricas-logged-users-e-auth-errors)
+    - [dashboard Logged users](#dashboard-logged-users)
+    - [Auth Errors](#auth-errors)
+  - [Métricas Connection State e Connection Timeout](#métricas-connection-state-e-connection-timeout)
+    - [Connection State](#connection-state)
+    - [Connection Timeout](#connection-timeout)
+  - [Métricas Error 500 e Error Rate](#métricas-error-500-e-error-rate)
+    - [error 500](#error-500)
+    - [Error rate](#error-rate)
+  - [Métricas Total Requests e Response Time](#métricas-total-requests-e-response-time)
+    - [Total Requests](#total-requests)
+    - [Response time](#response-time)
 
 
 ## Apresentaçao
@@ -2564,3 +2588,245 @@ Poderia, eu posso agregar esse resultado.
 
 Basicamente, se eu olhar para esse resultado, ele vai dizer que, por segundo, eu tive uma média de 1.2 requisições a cada segundo; no gráfico, quando fazemos a agregação, o resultado é esse.
 
+
+# Monitoramento: Prometheus, Grafana e Alertmanager
+
+## Subindo o Grafana
+
+Vamos fazer algumas configurações após a subida do contêiner e essa você realmente vai precisar executar. 
+
+O primeiro ponto, estou no meu workdir, estou no path em que está o meu Docker Compose. 
+
+Vou criar um diretório chamado grafana. 
+
+Esse diretório, essa pasta vai servir como um volume para o contêiner, e vai ser onde o Grafana armazena suas informações.
+
+Após criar esse diretório, vou aplicar um chmod para mudar as permissões dele para 777, então chmod 777 grafana.
+
+Quando fazemos isso, damos esse chmod, nós estamos atribuindo permissões muito abertas, muito inseguras para esse diretório. Porém, estamos falando somente do diretório grafana.
+
+Se eu olhar dentro do diretório grafana, ele está vazio, não tem nada. 
+
+Se eu olhar para o diretório em si, vocês vão ver que qualquer um pode executar, escrever e ler o diretório.
+
+Por que eu tenho que fazer isso? Quando o contêiner do Grafana subir, ele vai ter um usuário próprio que vai ter que usar esse diretório porque ele vai ser montado como volume dentro do contêiner e, se ele não tiver permissões para entrar nesse diretório e escrever, o contêiner não vai subir.
+
+Tendo feito isso, vamos abrir o nosso docker.compose.yml. 
+
+Você tem o contêiner do prometheus e você tem o contêiner do client que depende do proxy – o prometheus depende do proxy e o client depende do prometheus. Temos essa dependência intercalada de contêineres.
+
+Vamos respeitar isso para o Grafana. 
+
+```
+grafana-forum-api:
+    image: grafana/grafana
+    container_name: grafana-forum-api
+    volumes:
+      - ./grafana:/var/lib/grafana
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    networks:
+      - monit
+    depends_on:
+      - prometheus-forum-api
+```
+
+Vou pegar esse conteúdo e vou colar entre o conteúdo do prometheus e do client. 
+
+O que ele diz? 
+
+Que vamos ter um service, que no caso um contêiner chamado grafana-forum-api; ele vai trabalhar com a imagem corrente mais atual do Grafana; o nome do contêiner vai ser grafana-forum-api; ele vai ter como volume esse diretório grafana que eu criei e apliquei aquela permissão; e ele vai ser montado dentro do contêiner /var/lib/grafana.
+
+O esquema de restart é igual ao dos outros contêineres. 
+
+Se derrubarmos esse contêiner, ele não sobe sozinho, isso é proposital. Se tivermos uma falha, não vamos entrar em loop e ficar tentando subir o serviço, e também, em casos em que derrubemos um contêiner para forçar uma situação de erro, ele não vai subir no automático.
+
+Aqui está a porta, o Grafana roda na porta 3000 TCP e vai fazer bind de porta para o seu docker host, para a sua máquina. Então, em “localhost:3000”, você vai acessar o Grafana.
+
+Ele está na network: monit, que é a mesma do Prometheus, e ele depende do prometheus-forum-api. Essa é a configuração do Docker Compose para subir essa stack.
+
+A alteração a mais que eu vou fazer é na dependência do client. 
+
+O client vai subir após o grafana agora. 
+
+É bom porque dá um tempo para o client enviar as requisições para a API.
+
+O client fala com a API através do proxy, ele envia requisições, só que ele sobe antes que o MySQL esteja devidamente configurado. 
+
+No esquema de dependências, se olharmos aqui, você vai ver que temos o redis subindo primeiro; o mysql sobe depois do redis e depende do redis para subir; o app depende do mysql, por sua vez, para subir – aqui está a dependência dele, mysql-forum-api.
+
+O proxy depende do app para subir, da API; e o prometheus depende do proxy. Agora, o grafana depende do prometheus e o client depende do grafana.
+
+Sem essa configuração, do jeito que estava antes, apesar do contêiner do mysql subir, ele ainda não estava com a base configurada e o client já enviava requisições, o que resultava em alguns erros 500 que vocês podem observar nas métricas anteriores que nós verificamos.
+
+Inclusive, você vai conseguir verificar nas suas métricas que isso vai acontecer. Aqui, nós coibimos um pouco dessa falha porque o contêiner do client só vai começar a disparar suas requisições depois que o grafana tiver subido e isso dá um tempo a mais para o MySQL se organizar e estar bem das pernas nessa hora.
+
+Vou salvar o conteúdo e vou rodar o comando docker-compose up -d para ele subir em modo daemon.
+
+Ele vai subir toda a stack naquela ordem de dependências que está no Docker Compose e, por último, ele vai subir o Grafana. 
+
+Para validar isso, vou abrir o browser. 
+
+Em primeiro ponto, vou no “localhost/metrics” para que possamos verificar. Aqui, o erro 500 que eu falei que conseguíamos observá-lo. Por que continuamos observando o erro 500? Estamos usando um volume no Prometheus e o TSDB está sendo armazenado, então temos essa referência histórica.
+
+Se eu procurar por requisições 200, eu tenho o /actuator/prometheus e agora o meu client já começa a atingir o /auth, /topicos e /topicos/{id} está em algum lugar também – não estou enxergando, deixa eu atualizar mais uma vez porque ele também vai bater em /topicos/{id} daqui a pouco.
+
+Já estamos consumindo a aplicação, isso já está sendo refletido nas métricas. Se eu acessar o “localhost:9090”, eu vou cair na interface do Prometheus lá no "Graph”. Aqui, é o Expression Browser, é o navegador de expressão. Vamos agora para o Grafana. O Grafana vai estar em “localhost:3000”, como falei anteriormente.
+
+No primeiro acesso ao Grafana, o login é “admin” e senha “admin”, ele vem default com essa configuração. Autentica e, assim que você autenticar, ele vai pedir para você criar um novo password, uma nova senha. Vou colocar “Alura”.
+
+Vou salvar e pronto, autenticamos no Grafana. Essa é a interface do Grafana. 
+
+### configurar um datasource
+A primeira coisa que vamos fazer agora que o Grafana subiu é configurar um data source.
+
+Isso é rápido, vamos no painel à esquerda, no símbolo da engrenagem, em “Configuration > Data sources”. 
+
+O que é um data source? 
+
+É uma origem de dados do Grafana. 
+
+Ele pode ter diversos data sources, pode ser o Splunk, pode ser o CloudWatch, pode ser o Prometheus etc.
+
+Vamos adicionar no “Data sources”, o primeiro da lista já é o Prometheus. Vou selecioná-lo, o “Name” está “Prometheus”, vou colocar que ele está em “http://prometheus-forum-api:9090” TCP.
+
+Esse é o endereço porque ele vai falar com o contêiner. Se você colocar “localhost”, o Grafana vai achar que ele é o próprio endpoint de métricas do Prometheus, e não é.
+
+Aqui você não mexe em mais nenhuma opção, vem e roda um “Save & test”.
+
+Se eu procurar em “Data sources”, vou ver que já tenho o Prometheus configurado. 
+
+### folders
+A outra configuração rápida que vamos fazer é, no painel à esquerda, no símbolo do “+”. Vamos entrar em “Folder”.
+
+Vamos criar uma pasta e toda a nossa configuração de dashboard vai ficar nessa pasta. O nome da pasta vai ser “forum-api”, vou criar a pasta e posso criar o meu dashboard dentro dessa pasta.
+
+### dashboards
+Vou em “Create dashboard > Dashboard settings” e no nome do dashboard vou colocar “dash-forum-api”. Não vou colocar descrição, nada disso. Vou dar um “save”, vou salvar com as tags e pronto, está feito.
+
+Essa é a subida do Grafana e a configuração mais básica, que é a seleção de um data source e a criação de uma pasta em que o nosso dash será configurado.
+
+## Variáveis e métricas Uptime e Start Time
+### variaveis
+
+dashboard settings >> variables >> add variable
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/15.PNG)
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/16.PNG)
+
+### dashboard UPTIME
+```
+process_uptime_seconds{application="$application", instance="$instance", job="app-forum-api"}
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/17.PNG)
+
+### dashboard START TIME
+```
+process_start_time_seconds{application="$application", instance="$instance", job="app-forum-api"} * 1000
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/18.PNG)
+
+## Métricas Logback e JDBC Pool
+
+### dashboard Logback (LOGS)
+```
+increase(logback_events_total{application="$application", instance="$instance", job="app-forum-api", level="warn"}[5m])
+```
+```
+increase(logback_events_total{application="$application", instance="$instance", job="app-forum-api", level="error"}[5m])
+```
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/19.PNG)
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/20.PNG)
+
+### dashboard JDBC pool (connections)
+```
+hikaricp_connections{application="$application", instance="$instance", job="app-forum-api"}
+```
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/21.PNG)
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/22.PNG)
+
+## Métricas Logged Users e Auth Errors
+
+### dashboard Logged users
+```
+increase(auth_user_success_total [1m])
+```
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/23.PNG)
+
+### Auth Errors
+```
+increase(auth_user_error_total[1m])
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/24.PNG)
+
+
+## Métricas Connection State e Connection Timeout
+
+### Connection State
+```
+hikaricp_connections_active{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", pool="HikariPool-1"}
+```
+
+```
+hikaricp_connections_idle{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", pool="HikariPool-1"}
+```
+
+```
+hikaricp_connections_pending{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", pool="HikariPool-1"}
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/25.PNG)
+
+### Connection Timeout
+```
+increase(hikaricp_connections_timeout_total{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", pool="HikariPool-1"}[1m])
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/26.PNG)
+
+## Métricas Error 500 e Error Rate
+
+### error 500
+```
+sum(increase(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus", status="500"}[1m]))
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/27.PNG)
+
+### Error rate
+```
+sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus", status="500"}[5m])) / sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus"}[5m]))
+```
+
+```
+sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus", status="400"}[5m])) / sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus"}[5m]))
+```
+
+```
+sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus", status="404"}[5m])) / sum(rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus"}[5m]))
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/28.PNG)
+
+## Métricas Total Requests e Response Time
+
+### Total Requests
+```
+sum(increase(http_server_requests_seconds_count{application="app-forum-api", instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"}[1m]))
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/29.PNG)
+
+### Response time
+```
+rate(http_server_requests_seconds_sum{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus"}[1m]) / rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri!="/actuator/prometheus"}[1m])
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/30.PNG)
