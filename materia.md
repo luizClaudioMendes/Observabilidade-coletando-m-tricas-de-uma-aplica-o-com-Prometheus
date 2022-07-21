@@ -93,6 +93,18 @@ terminado em
   - [Métricas Total Requests e Response Time](#métricas-total-requests-e-response-time)
     - [Total Requests](#total-requests)
     - [Response time](#response-time)
+  - [Métricas Latency Average e Request Count](#métricas-latency-average-e-request-count)
+    - [Latency average](#latency-average)
+    - [Request count](#request-count)
+  - [Métricas Average Request Duration e Max Request Duration](#métricas-average-request-duration-e-max-request-duration)
+    - [Average Request Duration](#average-request-duration)
+    - [Max Request Duration](#max-request-duration)
+  - [Métricas Memory heap e Memory non-heap](#métricas-memory-heap-e-memory-non-heap)
+    - [Memory Heap](#memory-heap)
+    - [Memory non Heap](#memory-non-heap)
+  - [Métricas CPU Utilization e Load Average](#métricas-cpu-utilization-e-load-average)
+    - [CPU Utilization](#cpu-utilization)
+    - [Load Average](#load-average)
 
 
 ## Apresentaçao
@@ -2830,3 +2842,91 @@ rate(http_server_requests_seconds_sum{application="app-forum-api",instance="app-
 ```
 
 ![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/30.PNG)
+
+## Métricas Latency Average e Request Count
+### Latency average
+```
+histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application="app-forum-api",instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"} [1m])) by (le))
+```
+```
+histogram_quantile(0.90, sum(rate(http_server_requests_seconds_bucket{application="app-forum-api",instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"} [1m])) by (le))
+```
+```
+histogram_quantile(0.75, sum(rate(http_server_requests_seconds_bucket{application="app-forum-api",instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"} [1m])) by (le))
+```
+```
+histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{application="app-forum-api",instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"} [1m])) by (le))
+```
+```
+histogram_quantile(0.25, sum(rate(http_server_requests_seconds_bucket{application="app-forum-api",instance="app-forum-api:8080", job="app-forum-api", uri!="/actuator/prometheus"} [1m])) by (le))
+```
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/31.PNG)
+
+### Request count
+```
+sum(increase(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri="/topicos"} [1m]))
+```
+```
+sum(increase(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", uri="/topicos/{id}"} [1m]))
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/32.PNG)
+
+## Métricas Average Request Duration e Max Request Duration
+
+### Average Request Duration
+```
+rate(http_server_requests_seconds_sum{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",status="200", uri="/topicos/{id}"}[1m]) / rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",status="200", uri="/topicos/{id}"}[1m]) 
+```
+
+```
+rate(http_server_requests_seconds_sum{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",status="200", uri="/auth"}[1m]) / rate(http_server_requests_seconds_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",status="200", uri="/auth"}[1m]) 
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/33.PNG)
+
+### Max Request Duration
+```
+http_server_requests_seconds_max{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api", status="200"}
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/34.PNG)
+
+## Métricas Memory heap e Memory non-heap
+### Memory Heap
+```
+sum(jvm_memory_used_bytes{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",area="heap"})*100 / sum(jvm_memory_max_bytes{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",area="heap"})
+```
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/35.PNG)
+
+### Memory non Heap
+```
+sum(jvm_memory_used_bytes{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",area="nonheap"})*100 / sum(jvm_memory_max_bytes{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api",area="nonheap"})
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/36.PNG)
+
+## Métricas CPU Utilization e Load Average
+### CPU Utilization
+```
+system_cpu_usage{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api"}
+```
+
+```
+process_cpu_usage{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api"}
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/37.PNG)
+
+### Load Average
+```
+system_load_average_1m{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api"}
+```
+
+```
+system_cpu_count{application="app-forum-api",instance="app-forum-api:8080",job="app-forum-api"}
+```
+
+![](https://github.com/luizClaudioMendes/Observabilidade-coletando-m-tricas-de-uma-aplica-o-com-Prometheus/blob/main/imagens/38.PNG)
+
+##
